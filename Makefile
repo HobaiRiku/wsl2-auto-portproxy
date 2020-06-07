@@ -11,7 +11,7 @@ GOGET=$(GOCMD) get
 BINARY_NAME=wslpp
 
 # git version
-VERSION := $(shell git describe --always |sed -e "s/^v//")
+VERSION := $(shell git describe --always --tags  |sed -e "s/^v//")
 
 # LDFLAGS
 LDFLAGS = -ldflags "-s -w -X main.version=$(VERSION)"

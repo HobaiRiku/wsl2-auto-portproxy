@@ -1,6 +1,7 @@
 # wsl2-auto-portProxy
 wsl2-auto-portProxy(wslpp) is a simple tool for proxying port of linux running in wsl2 (which now use a hyper-v nat network), it automatically scans the port in wls and setup a port proxy in windows host.    
-**Note: only port listening at [::] or 0.0.0.0 works.**
+
+**Note: only port listening at [::] or 0.0.0.0 works, and will only works to  your default  wsl distribution**
 
 ## Feature
 - [x] TCP port support
