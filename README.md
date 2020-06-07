@@ -8,8 +8,19 @@ wsl2-auto-portProxy(wslpp) is a simple tool for proxying port of linux running i
 - [ ] web interface
 - [ ] UDP port support
 
-## Install
+## Build and install
 
+####build wslpp.exe from source
+```bash
+make build
+```
+the bin file will be store in dist/wslpp.exe    
+
+#### or install with `go get`
+```bash
+go get https://github.com/HobaiRiku/wsl2-auto-portproxy
+```
+and use `wsl2-auto-portproxy.exe` to start proxy
 
 ## How it works
 wslpp start an interval to get IP address of the nat interface and scan all ports listening at all network in the subsystem, then use golang's `net` to start proxy direct to ports.
@@ -36,10 +47,6 @@ Example:
 * predefined: Define the custom port to proxy, "666:22" means `windows(666)->linux(22)`, if undefined, port in windows will follow the same of linux. Must be a string array in the sub field name `tcp`.
 * ignore: If defined, will ignore the port in linux. Must be a number array in the sub field name `tcp`. 
 
-## Build
-```bash
-make build
-```
 
 ## License
 MIT
