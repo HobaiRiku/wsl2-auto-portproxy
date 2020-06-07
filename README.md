@@ -11,7 +11,7 @@ wsl2-auto-portProxy(wslpp) is a simple tool for proxying port of linux running i
 
 ## Build and install
 
-####build wslpp.exe from source
+#### build wslpp.exe from source
 ```bash
 make build
 ```
