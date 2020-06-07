@@ -9,8 +9,9 @@ import (
 )
 
 type Port struct {
-	Type string
-	Port int64
+	Type      string
+	Port      int64
+	ProxyPort int64
 }
 
 func GetWslIP() (string, error) {
@@ -45,7 +46,7 @@ func GetLinuxHostPorts() ([]Port, error) {
 			}
 		}
 		if !duplicated {
-			port := Port{Type: ret[1], Port: p}
+			port := Port{Type: ret[1], Port: p, ProxyPort: p}
 			linuxPorts = append(linuxPorts, port)
 		}
 	}
@@ -71,7 +72,7 @@ func GetWindowsHostPorts() ([]Port, error) {
 			}
 		}
 		if !duplicated {
-			port := Port{Type: ret[1], Port: p}
+			port := Port{Type: ret[1], Port: p, ProxyPort: p}
 			if port.Type == "TCP" {
 				port.Type = "tcp"
 			} else {

@@ -11,13 +11,14 @@ import (
 type Proxy struct {
 	Type      string
 	Port      int64
+	ProxyPort int64
 	Listener  *net.TCPListener
 	IsRunning bool
-	WslIp string
+	WslIp     string
 }
 
 func (p *Proxy) Start() error {
-	localAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf(":%d", p.Port))
+	localAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf(":%d", p.ProxyPort))
 	if err != nil {
 		log.Printf("resove local Addr error,%s\n", err)
 		return err

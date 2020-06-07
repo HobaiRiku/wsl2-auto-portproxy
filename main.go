@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"time"
+	"wsl2-auto-portproxy/lib/config"
 	"wsl2-auto-portproxy/lib/proxy"
 	"wsl2-auto-portproxy/lib/service"
 	"wsl2-auto-portproxy/lib/storage"
@@ -14,7 +15,7 @@ import (
 var version string
 
 func main() {
-	// 输出版本命令
+	// print version
 	var showVersion bool
 	flag.BoolVar(&showVersion, "v", false, "show version")
 	flag.Parse()
@@ -22,25 +23,71 @@ func main() {
 		fmt.Println(version)
 		os.Exit(1)
 	}
+	// get config interval
+	go func() {
+		for {
+			c, err := config.GetConfig()
+			if err != nil {
+				log.Printf("error getting config file: %s", err)
+			} else {
+				storage.C = c
+			}
+			time.Sleep(time.Second)
+		}
+	}()
 	for {
-		// step 1: get linux's ip
+		// get linux's ip
 		storage.WslIp, _ = service.GetWslIP()
-		// step 2: get all tcp ports in linux now
+		// get all tcp ports in linux now
 		linuxPorts, err := service.GetLinuxHostPorts()
 		if err != nil {
 			log.Fatal(err)
 		}
-		// step 3: get all tcp ports in local windows now
+		// change proxy port by config "predefined"
+		for _, p := range linuxPorts {
+			for _, predefinedTcpPort := range storage.C.Predefined.Tcp {
+				p.ProxyPort = predefinedTcpPort.Local
+			}
+		}
+		// filter by config "ignore"
+		for i, p := range linuxPorts {
+			needToDelete := true
+			for _, ignorePort := range storage.C.Ignore.Tcp {
+				if ignorePort == p.Port {
+					needToDelete = false
+				}
+			}
+			if needToDelete {
+				linuxPorts = append(linuxPorts[:i], linuxPorts[i+1:]...)
+			}
+		}
+		// filter by config "OnlyPredefined"
+		if storage.C.OnlyPredefined {
+			for i, p := range linuxPorts {
+				needToDelete := true
+				for _, predefinedTcpPort := range storage.C.Predefined.Tcp {
+					if predefinedTcpPort.Remote == p.Port {
+						needToDelete = false
+					}
+				}
+				if needToDelete {
+					linuxPorts = append(linuxPorts[:i], linuxPorts[i+1:]...)
+				}
+			}
+		}
+		// get all tcp ports in local windows now
 		windowsPorts, err := service.GetWindowsHostPorts()
 		if err != nil {
 			log.Println(err)
 		}
-		// step 4: calculate which port need to proxy
+		// calculate which port need to proxy
 		needPorts := service.GetNeededProxyPorts(linuxPorts, windowsPorts)
 		// create proxy
 		for _, port := range needPorts {
 			omitted := false
 			for _, p := range storage.ProxyPool {
+				// update WslIp
+				p.WslIp = storage.WslIp
 				if p.Port == port.Port {
 					omitted = true
 					if !p.IsRunning {
@@ -53,7 +100,7 @@ func main() {
 				}
 			}
 			if !omitted {
-				newProxy := proxy.Proxy{Port: port.Port, Type: port.Type, WslIp: storage.WslIp}
+				newProxy := proxy.Proxy{Port: port.Port, ProxyPort: port.ProxyPort, Type: port.Type, WslIp: storage.WslIp}
 				err := newProxy.Start()
 				if err != nil {
 					log.Printf("start proxy error,%s\n", err)
@@ -65,7 +112,7 @@ func main() {
 		for _, p := range storage.ProxyPool {
 			needToDelete := true
 			for _, port := range linuxPorts {
-				if port.Port == p.Port {
+				if port.Port == p.Port && port.ProxyPort == p.ProxyPort {
 					needToDelete = false
 					break
 				}
@@ -76,7 +123,7 @@ func main() {
 			// clean not running proxy
 			if !p.IsRunning {
 				for i, one := range storage.ProxyPool {
-					if one.Port == p.Port {
+					if one.Port == p.Port && one.ProxyPort == p.ProxyPort {
 						storage.ProxyPool = append(storage.ProxyPool[:i], storage.ProxyPool[i+1:]...)
 					}
 				}
