@@ -1,8 +1,8 @@
 package storage
 
 import (
-	"wsl2-auto-portproxy/lib/config"
-	"wsl2-auto-portproxy/lib/proxy"
+	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/config"
+	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/proxy"
 )
 
 var ProxyPool []proxy.Proxy

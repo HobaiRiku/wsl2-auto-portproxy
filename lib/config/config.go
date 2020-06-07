@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/util"
 	"github.com/pkg/errors"
 	"io/ioutil"
 	"log"
@@ -11,7 +12,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"wsl2-auto-portproxy/lib/util"
 )
 
 type Config struct {

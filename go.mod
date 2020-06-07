@@ -1,4 +1,4 @@
-module wsl2-auto-portproxy
+module github.com/HobaiRiku/wsl2-auto-portproxy
 
 go 1.14
 

@@ -3,13 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/config"
+	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/proxy"
+	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/service"
+	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/storage"
 	"log"
 	"os"
 	"time"
-	"wsl2-auto-portproxy/lib/config"
-	"wsl2-auto-portproxy/lib/proxy"
-	"wsl2-auto-portproxy/lib/service"
-	"wsl2-auto-portproxy/lib/storage"
 )
 
 var version string
