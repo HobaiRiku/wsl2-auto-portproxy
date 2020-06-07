@@ -91,11 +91,14 @@ func main() {
 		// create proxy
 		for _, port := range needPorts {
 			omitted := false
-			for _, p := range storage.ProxyPool {
-				// update WslIp
-				p.WslIp = storage.WslIp
+			for i, p := range storage.ProxyPool {
 				if p.Port == port.Port {
 					omitted = true
+					// update WslIp and restart proxy (if changed)
+					if p.WslIp != storage.WslIp {
+						storage.ProxyPool[i].WslIp = storage.WslIp
+						_ = p.Stop()
+					}
 					if !p.IsRunning {
 						err := p.Start()
 						if err != nil {
@@ -115,26 +118,23 @@ func main() {
 			}
 		}
 		// check for delete update
-		for _, p := range storage.ProxyPool {
+		for i := 0; i < len(storage.ProxyPool); {
 			needToDelete := true
 			for _, port := range linuxPorts {
-				if port.Port == p.Port && port.ProxyPort == p.ProxyPort {
+				if port.Port == storage.ProxyPool[i].Port &&
+					port.ProxyPort == storage.ProxyPool[i].ProxyPort {
 					needToDelete = false
 					break
 				}
 			}
 			if needToDelete {
-				_ = p.Stop()
+				_ = storage.ProxyPool[i].Stop()
 			}
-			// clean not running proxy
-			if !p.IsRunning {
-				for i := 0; i < len(storage.ProxyPool); {
-					if storage.ProxyPool[i].Port == p.Port && storage.ProxyPool[i].ProxyPort == p.ProxyPort {
-						storage.ProxyPool = append(storage.ProxyPool[:i], storage.ProxyPool[i+1:]...)
-					} else {
-						i++
-					}
-				}
+			// delete
+			if !storage.ProxyPool[i].IsRunning {
+				storage.ProxyPool = append(storage.ProxyPool[:i], storage.ProxyPool[i+1:]...)
+			} else {
+				i++
 			}
 		}
 		time.Sleep(time.Second * 1)
