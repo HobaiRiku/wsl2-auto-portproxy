@@ -9,6 +9,12 @@ wsl2-auto-portProxy(wslpp) is a simple tool for proxying port of linux running i
 - [ ] web interface
 - [ ] UDP port support
 
+
+## Requirement
+your wsl linux must install the `net-tools` by 
+```bash
+sudo apt-get install net-tools
+```
 ## Build and install
 you can download the bin file(wslpp.exe) in [release](https://github.com/HobaiRiku/wsl2-auto-portproxy/releases).
 #### or build wslpp.exe from source
