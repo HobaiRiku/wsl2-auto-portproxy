@@ -44,34 +44,40 @@ func main() {
 			log.Fatal(err)
 		}
 		// change proxy port by config "predefined"
-		for _, p := range linuxPorts {
+		for i, p := range linuxPorts {
 			for _, predefinedTcpPort := range storage.C.Predefined.Tcp {
-				p.ProxyPort = predefinedTcpPort.Local
+				if p.Port == predefinedTcpPort.Remote {
+					linuxPorts[i].ProxyPort = predefinedTcpPort.Local
+				}
 			}
 		}
 		// filter by config "ignore"
-		for i, p := range linuxPorts {
-			needToDelete := true
+		for i := 0; i < len(linuxPorts); {
+			needToDelete := false
 			for _, ignorePort := range storage.C.Ignore.Tcp {
-				if ignorePort == p.Port {
-					needToDelete = false
+				if ignorePort == linuxPorts[i].Port {
+					needToDelete = true
 				}
 			}
 			if needToDelete {
 				linuxPorts = append(linuxPorts[:i], linuxPorts[i+1:]...)
+			} else {
+				i++
 			}
 		}
 		// filter by config "OnlyPredefined"
 		if storage.C.OnlyPredefined {
-			for i, p := range linuxPorts {
+			for i := 0; i < len(linuxPorts); {
 				needToDelete := true
 				for _, predefinedTcpPort := range storage.C.Predefined.Tcp {
-					if predefinedTcpPort.Remote == p.Port {
+					if predefinedTcpPort.Remote == linuxPorts[i].Port {
 						needToDelete = false
 					}
 				}
 				if needToDelete {
 					linuxPorts = append(linuxPorts[:i], linuxPorts[i+1:]...)
+				} else {
+					i++
 				}
 			}
 		}
@@ -122,9 +128,11 @@ func main() {
 			}
 			// clean not running proxy
 			if !p.IsRunning {
-				for i, one := range storage.ProxyPool {
-					if one.Port == p.Port && one.ProxyPort == p.ProxyPort {
+				for i := 0; i < len(storage.ProxyPool); {
+					if storage.ProxyPool[i].Port == p.Port && storage.ProxyPool[i].ProxyPort == p.ProxyPort {
 						storage.ProxyPool = append(storage.ProxyPool[:i], storage.ProxyPool[i+1:]...)
+					} else {
+						i++
 					}
 				}
 			}

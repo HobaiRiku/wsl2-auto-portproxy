@@ -28,7 +28,7 @@ func (p *Proxy) Start() error {
 		log.Printf("Could not start proxy server on %d: %v\n", p.Port, err)
 		return err
 	}
-	log.Printf("new proxy start in port:%d", p.Port)
+	log.Printf("new proxy start in port:%d->%d", p.ProxyPort, p.Port)
 	go func() {
 		for {
 			conn, err := p.Listener.AcceptTCP()
@@ -45,7 +45,7 @@ func (p *Proxy) Start() error {
 
 func (p *Proxy) Stop() error {
 	p.IsRunning = false
-	log.Printf("proxy stop, port:%d", p.Port)
+	log.Printf("proxy stop, port:%d->%d", p.ProxyPort, p.Port)
 	return p.Listener.Close()
 }
 

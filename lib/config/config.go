@@ -34,7 +34,7 @@ func (pp PortProxy) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("$d:$d", pp.Local, pp.Remote)), nil
 }
 
-func (pp *PortProxy) UnMarshalJSON(data []byte) error {
+func (pp *PortProxy) UnmarshalJSON(data []byte) error {
 	var ppStr string
 	err := json.Unmarshal(data, &ppStr)
 	if err != nil {
