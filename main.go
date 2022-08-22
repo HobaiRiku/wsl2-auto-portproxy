@@ -41,7 +41,8 @@ func main() {
 		// get all tcp ports in linux now
 		linuxPorts, err := service.GetLinuxHostPorts()
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("GetLinuxHostPorts error: %s, retrying", err)
+			continue // Skipping current loop is Necessary. Otherwise, running port will be stopped.
 		}
 		// change proxy port by config "predefined"
 		for i, p := range linuxPorts {
