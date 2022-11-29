@@ -23,6 +23,7 @@ func main() {
 		fmt.Println(version)
 		os.Exit(1)
 	}
+	ready := make(chan bool)
 	// get config interval
 	go func() {
 		for {
@@ -32,10 +33,14 @@ func main() {
 			} else {
 				storage.C = c
 			}
+			ready <- true
 			time.Sleep(time.Second)
 		}
 	}()
+
 	for {
+		// wait for a config update interval
+		<-ready
 		// get linux's ip
 		storage.WslIp, _ = service.GetWslIP()
 		// get all tcp ports in linux now

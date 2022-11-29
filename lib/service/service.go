@@ -28,17 +28,26 @@ func GetWslIP() (string, error) {
 	return ip, nil
 }
 func GetLinuxHostPorts() ([]Port, error) {
-	cmd := exec.Command("wsl", "--exec", "netstat", "-tunlp")
+	// use iproute2 (ss) instead of net-tools(netstat）
+	cmd := exec.Command("wsl", "--exec", "ss", "-tunl")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
-	reg := regexp.MustCompile("(tcp|udp)(\\d+)\\s+\\d+\\s+\\d+\\s+(:::|0.0.0.0:)(\\d{2,5})")
+	reg := regexp.MustCompile(
+		"(tcp|udp)(\\d?)\\s+([a-zA-Z]*)\\s+\\d+\\s+\\d+\\s+(\\[::\\]:|0.0.0.0:|\\*:)(\\d{2,5})",
+	)
 	rets := reg.FindAllStringSubmatch(string(output), -1)
 	var linuxPorts []Port
 	for _, ret := range rets {
 		duplicated := false
-		p, _ := strconv.ParseInt(ret[4], 10, 0)
+		// ret[0]: match string ,
+		// ret[1]: protocol(tcp or udp),
+		// ret[2]: protocol version(6 or null, maybe this will never show),
+		// ret[3]: status (LISTEN or UNCONN),
+		// ret[4]: 0.0.0.0: or ::: ,
+		// ret[5]: port number
+		p, _ := strconv.ParseInt(ret[5], 10, 0)
 		for _, find := range linuxPorts {
 			if find.Port == p {
 				duplicated = true
