@@ -11,10 +11,16 @@ wsl2-auto-portProxy(wslpp) is a simple tool for proxying port of linux running i
 
 
 ## Requirement
-your wsl linux must install the `net-tools` by 
+~~your wsl linux must install the `net-tools` by~~ 
 ```bash
+# deprecated !!!, not needed anymore
 sudo apt-get install net-tools
 ```
+**Note: `net-tools` is not required anymore, use `iproute2` instead 
+(which is preinstalled by default in many linux distribution)**, 
+see [Why is net-tools deprecated](https://unix.stackexchange.com/questions/677763/why-is-net-tools-deprecated-can-i-still-use-it-without-security-issue)
+
+
 ## Build and install
 you can download the bin file(wslpp.exe) in [release](https://github.com/HobaiRiku/wsl2-auto-portproxy/releases).
 #### or build wslpp.exe from source
@@ -55,6 +61,17 @@ Example:
 * ignore: If defined, will ignore the port in linux. Must be a number array in the sub field name `tcp`. 
 
 **Note: If port is already use by another program in windows, the port will be omitted**
+
+## About `wslhost.exe`
+Now Microsoft will forward ports in linux by `wslhost.exe` when `.wslconfig` includes `localhostForwarding=true` (which is ture by default), see [wsl-config](https://learn.microsoft.com/en-us/windows/wsl/wsl-config). But, all those ports will only listen at local network on windows host, which means you can't access them from other devices in the same network. 
+For now, `wslpp` will still open a same port listening at all interfaces, but if you don't need network access at this, you probably don't need `wslpp` at all, `wslhost.exe` is enough.
+## Another solution for wsl2 port forwarding - `WSLHostPatcher` 
+Fond a way to inject `wslhost.exe` to forward ports to all interfaces, 
+[WSLHostPatcher](https://github.com/CzBiX/WSLHostPatcher).    
+By `WSLHostPatcher` you can forward ports to all interfaces by `wslhost.exe` more gracefully and efficiently.
+
+## Security issue
+It is unsafe to open ports in windows host to the internet (maybe the main reason why wslhost.exe don't do this), so when start port at all interfaces, be sure you know what you are doing.
 
 ## License
 MIT
