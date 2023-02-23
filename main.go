@@ -3,13 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
+	"os"
+	"time"
+
 	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/config"
 	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/proxy"
 	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/service"
 	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/storage"
-	"log"
-	"os"
-	"time"
 )
 
 var version string
@@ -37,7 +38,7 @@ func main() {
 			time.Sleep(time.Second)
 		}
 	}()
-
+	var linuxCommandFailCount = 0
 	for {
 		// wait for a config update interval
 		<-ready
@@ -46,9 +47,16 @@ func main() {
 		// get all tcp ports in linux now
 		linuxPorts, err := service.GetLinuxHostPorts()
 		if err != nil {
-			log.Printf("GetLinuxHostPorts error: %s, retrying", err)
+			linuxCommandFailCount++
+			if linuxCommandFailCount > 5 {
+				log.Printf("GetLinuxHostPorts keep error for many times, (wsl maybe run into slow response situation!): %s, retrying", err)
+				linuxCommandFailCount = 0
+			}
+			// wait for a while, wsl command may be running
+			time.Sleep(time.Second * 2)
 			continue // Skipping current loop is Necessary. Otherwise, running port will be stopped.
 		}
+		linuxCommandFailCount = 0
 		// change proxy port by config "predefined"
 		for i, p := range linuxPorts {
 			for _, predefinedTcpPort := range storage.C.Predefined.Tcp {
