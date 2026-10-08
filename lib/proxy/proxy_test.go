@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"net"
-	"strconv"
 	"testing"
 	"time"
 )
@@ -16,10 +15,9 @@ func mustCIDR(t *testing.T, s string) *net.IPNet {
 }
 
 func TestAllowed(t *testing.T) {
-	SetAllowlist(map[int64][]*net.IPNet{
+	rules := map[int64][]*net.IPNet{
 		22: {mustCIDR(t, "192.168.1.0/24"), mustCIDR(t, "10.0.0.5/32")},
-	})
-	defer SetAllowlist(nil)
+	}
 
 	cases := []struct {
 		port int64
@@ -36,7 +34,8 @@ func TestAllowed(t *testing.T) {
 	}
 	for _, c := range cases {
 		addr := &net.TCPAddr{IP: net.ParseIP(c.ip), Port: 50000}
-		if got := Allowed(c.port, addr); got != c.want {
+		nets, restricted := rules[c.port]
+		if got := allowedBy(nets, restricted, addr); got != c.want {
 			t.Errorf("Allowed(%d, %s) = %v, want %v", c.port, c.ip, got, c.want)
 		}
 	}
@@ -44,13 +43,7 @@ func TestAllowed(t *testing.T) {
 
 // startProxy starts a proxy on a free local port forwarding to 127.0.0.1:remotePort.
 func startProxy(t *testing.T, remotePort int64) *Proxy {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	localPort := int64(ln.Addr().(*net.TCPAddr).Port)
-	ln.Close()
-	p := &Proxy{Type: "tcp", Port: remotePort, ProxyPort: localPort, WslIp: "127.0.0.1"}
+	p := &Proxy{Type: "tcp", Port: remotePort, WslIp: "127.0.0.1", ListenHost: "127.0.0.1"}
 	if err := p.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +71,7 @@ func TestClientClosedWhenRemoteUnreachable(t *testing.T) {
 	ln.Close()
 
 	p := startProxy(t, deadPort)
-	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.FormatInt(p.ProxyPort, 10)))
+	conn, err := net.Dial("tcp", p.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +88,7 @@ func TestLoopbackClientBypassesAllowlist(t *testing.T) {
 	p := startProxy(t, int64(backend.Addr().(*net.TCPAddr).Port))
 
 	// the rules exclude 127.0.0.1, but loopback clients are always allowed
-	SetAllowlist(map[int64][]*net.IPNet{p.ProxyPort: {mustCIDR(t, "203.0.113.0/24")}})
-	defer SetAllowlist(nil)
+	p.SetPolicy([]*net.IPNet{mustCIDR(t, "203.0.113.0/24")}, true)
 
 	go func() {
 		c, err := backend.Accept()
@@ -105,7 +97,7 @@ func TestLoopbackClientBypassesAllowlist(t *testing.T) {
 			c.Close()
 		}
 	}()
-	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.FormatInt(p.ProxyPort, 10)))
+	conn, err := net.Dial("tcp", p.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

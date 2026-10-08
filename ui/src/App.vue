@@ -14,6 +14,12 @@ const editorError = ref('')
 const notice = ref('')
 const selected = ref('')
 const rows = computed(() => service.status?.proxies || [])
+const emptyPortsMessage = computed(() => {
+  if (service.error) return '连接服务后显示端口状态。'
+  const mode = service.status?.wsl.networkMode
+  if (mode && mode !== 'nat' && mode !== 'unknown') return `当前网络模式为 ${mode}，此版本暂停代理。`
+  return '暂无转发端口。等待默认 WSL 发行版中的服务被发现。'
+})
 const stateLabels: Record<string, string> = { running: '运行中', stopped: '已停止', unknown: '未知', active: '已监听', blocked: '端口受阻', stale: '等待确认', error: '异常', unsupported: '暂不代理' }
 const label = (state: string) => stateLabels[state] || state
 let timer: ReturnType<typeof setInterval>
@@ -73,6 +79,7 @@ onUnmounted(() => clearInterval(timer))
           {{ service.needsAuth ? '请在本机运行 wslpp ui，以授权链接打开此界面。' : service.error }}
         </NAlert>
         <NAlert v-if="service.status?.configError" type="error" class="alert" title="配置未应用">{{ service.status.configError }}</NAlert>
+        <NAlert v-if="service.status?.wsl.networkMode === 'mirrored'" type="info" class="alert" title="已识别 mirrored 网络">此版本暂停代理；请使用 WSL 原生网络连接。</NAlert>
         <section v-if="tab === 'overview'">
           <div class="page-title"><div><h1>转发概览</h1><p>查看 WSL 状态和 Windows 端口的实际运行情况。</p></div><span class="muted">{{ service.status?.version || '—' }}</span></div>
           <div class="summary">
@@ -86,14 +93,14 @@ onUnmounted(() => clearInterval(timer))
           <div class="page-title"><div><h1>端口转发</h1><p>Windows 监听地址 → WSL 服务地址</p></div><NButton @click="selectTab('config')">编辑规则</NButton></div>
           <div class="table-wrap"><table><thead><tr><th>协议</th><th>Windows</th><th>WSL 目标</th><th>状态</th><th>连接 / 会话</th></tr></thead><tbody>
             <tr v-for="row in rows" :key="row.id" :class="{ selected: selected === row.id }"><td>{{ row.protocol.toUpperCase() }}</td><td><button class="row-select" @click="selected = selected === row.id ? '' : row.id">{{ row.listen }}</button></td><td>{{ row.target }}</td><td><NTag :type="row.state === 'active' ? 'success' : 'warning'" size="small" :bordered="false">{{ label(row.state) }}</NTag></td><td>{{ row.activeConnections }}</td></tr>
-            <tr v-if="!rows.length"><td colspan="5" class="empty">{{ service.error ? '连接服务后显示端口状态。' : '暂无转发端口。WSL 服务启动后将自动发现。' }}</td></tr>
+            <tr v-if="!rows.length"><td colspan="5" class="empty">{{ emptyPortsMessage }}</td></tr>
           </tbody></table></div>
           <NCard v-for="row in rows.filter(row => row.id === selected)" :key="row.id" title="端口详情" class="details"><p>{{ row.listen }} → {{ row.target }}</p><p>转入 {{ row.bytesIn }} B · 转出 {{ row.bytesOut }} B · 丢弃 {{ row.dropped }}</p><p v-if="row.error" class="error">{{ row.error }}</p></NCard>
         </section>
         <section v-else-if="tab === 'config'">
           <div class="page-title"><div><h1>代理配置</h1><p>沿用 JSON 配置；保存时校验，失效编辑保留最后有效配置。</p></div></div>
           <NAlert v-if="editorError" type="error" class="alert">{{ editorError }}</NAlert><NAlert v-if="notice" type="success" class="alert">{{ notice }}</NAlert>
-          <NCard><NInput v-model:value="configText" type="textarea" :autosize="{ minRows: 18, maxRows: 30 }" aria-label="JSON 配置" :disabled="!loaded" placeholder="连接服务后加载配置" /><p class="muted">修改映射、忽略端口或收紧 allowlist 会影响相应连接。</p><div class="actions"><NButton type="primary" :loading="saving" :disabled="!loaded || !!service.error" @click="saveConfig">保存配置</NButton><NButton :disabled="saving" @click="loadConfig">重新加载</NButton></div></NCard>
+          <NCard><NInput v-model:value="configText" type="textarea" :autosize="{ minRows: 18, maxRows: 30 }" :input-props="{ 'aria-label': 'JSON 配置' }" :disabled="!loaded" placeholder="连接服务后加载配置" /><p class="muted">修改映射、忽略端口或收紧 allowlist 会影响相应连接。</p><div class="actions"><NButton type="primary" :loading="saving" :disabled="!loaded || !!service.error" @click="saveConfig">保存配置</NButton><NButton :disabled="saving" @click="loadConfig">重新加载</NButton></div></NCard>
         </section>
         <section v-else>
           <div class="page-title"><div><h1>运行诊断</h1><p>查看扫描、配置和端口启动的最近事件。</p></div><NButton @click="selectTab('logs')">刷新日志</NButton></div>

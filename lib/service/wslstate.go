@@ -2,39 +2,15 @@ package service
 
 import (
 	"bytes"
-	"errors"
-	"os"
-	"os/exec"
+	"context"
 	"strings"
 	"unicode/utf16"
 )
 
-// defaultDistro caches the name of the default distribution, it is only
-// looked up again when it isn't among the running ones.
-var defaultDistro string
-
-// IsWslRunning reports whether the default wsl distribution is running.
-// Only `wsl --list` commands are used here, they never boot the wsl vm,
-// unlike `wsl -- <cmd>`, so polling this keeps a stopped wsl stopped.
+// IsWslRunning checks state without executing a Linux command.
 func IsWslRunning() (bool, error) {
-	out, err := wslList("--list", "--running", "--quiet")
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// wsl exits with non-zero status when there are no running distributions
-			return false, nil
-		}
-		return false, err
-	}
-	running := parseLines(out)
-	if !containsFold(running, defaultDistro) {
-		all, err := wslList("--list", "--verbose")
-		if err != nil {
-			return false, err
-		}
-		defaultDistro = parseDefaultDistro(all)
-	}
-	return containsFold(running, defaultDistro), nil
+	state, err := (Scanner{}).State(context.Background())
+	return state.State == "running", err
 }
 
 func containsFold(names []string, name string) bool {
@@ -47,17 +23,6 @@ func containsFold(names []string, name string) bool {
 		}
 	}
 	return false
-}
-
-func wslList(args ...string) (string, error) {
-	cmd := exec.Command("wsl", args...)
-	// newer wsl prints utf-8 with this set, older ones always print utf-16
-	cmd.Env = append(os.Environ(), "WSL_UTF8=1")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return decodeWslOutput(output), nil
 }
 
 // decodeWslOutput converts wsl.exe output, which is utf-16le on most
@@ -85,8 +50,8 @@ func parseDefaultDistro(out string) string {
 			continue
 		}
 		fields := strings.Fields(strings.TrimPrefix(line, "*"))
-		if len(fields) > 0 {
-			return fields[0]
+		if len(fields) >= 3 {
+			return strings.Join(fields[:len(fields)-2], " ")
 		}
 	}
 	return ""
