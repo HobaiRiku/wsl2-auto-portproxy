@@ -56,3 +56,13 @@ func TestParseLines(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestContainsFold(t *testing.T) {
+	names := []string{"Ubuntu-22.04", "Debian"}
+	if !containsFold(names, "ubuntu-22.04") {
+		t.Error("should match case-insensitively")
+	}
+	if containsFold(names, "") || containsFold(nil, "Debian") {
+		t.Error("empty name or list should not match")
+	}
+}

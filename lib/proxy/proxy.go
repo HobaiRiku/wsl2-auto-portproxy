@@ -24,20 +24,23 @@ func (p *Proxy) Start() error {
 		log.Printf("resove local Addr error,%s\n", err)
 		return err
 	}
-	p.Listener, err = net.ListenTCP("tcp", localAddr)
+	ln, err := net.ListenTCP("tcp", localAddr)
 	if err != nil {
 		log.Printf("Could not start proxy server on %d: %v\n", p.Port, err)
 		return err
 	}
+	p.Listener = ln
+	// fixed for this listener's lifetime, a new wsl ip means Stop and Start again
+	target := net.JoinHostPort(p.WslIp, strconv.FormatInt(p.Port, 10))
 	log.Printf("new proxy start in port:%d->%d", p.ProxyPort, p.Port)
 	go func() {
 		for {
-			conn, err := p.Listener.AcceptTCP()
+			conn, err := ln.AcceptTCP()
 			if err != nil {
 				log.Println("Could not accept client connection:", err)
 				break
 			}
-			go p.handleTCPConn(conn, 5)
+			go p.handleTCPConn(conn, target, 5)
 		}
 	}()
 	p.IsRunning = true
@@ -50,7 +53,7 @@ func (p *Proxy) Stop() error {
 	return p.Listener.Close()
 }
 
-func (p *Proxy) handleTCPConn(conn *net.TCPConn, timeout int64) {
+func (p *Proxy) handleTCPConn(conn *net.TCPConn, targetAddr string, timeout int64) {
 	// close the client connection on every return path, including dial failures
 	defer conn.Close()
 	log.Printf("Client '%v' connected!\n", conn.RemoteAddr())
@@ -62,7 +65,6 @@ func (p *Proxy) handleTCPConn(conn *net.TCPConn, timeout int64) {
 
 	_ = conn.SetKeepAlive(true)
 	_ = conn.SetKeepAlivePeriod(time.Second * 15)
-	targetAddr := net.JoinHostPort(p.WslIp, strconv.FormatInt(p.Port, 10))
 	c, err := net.DialTimeout("tcp", targetAddr, time.Duration(timeout)*time.Second)
 	if err != nil {
 		log.Println("Could not connect to remote server:", err)

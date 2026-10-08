@@ -78,6 +78,9 @@ func (ar *AllowlistRules) UnmarshalJSON(data []byte) error {
 		if err != nil || port <= 0 || port > 65535 {
 			return fmt.Errorf("allowlist: invalid port %q", portStr)
 		}
+		if _, ok := ar.Tcp[port]; ok {
+			return fmt.Errorf("allowlist: duplicate port %d", port)
+		}
 		nets := make([]*net.IPNet, 0, len(entries))
 		for _, entry := range entries {
 			n, err := parseIPOrCIDR(entry)
