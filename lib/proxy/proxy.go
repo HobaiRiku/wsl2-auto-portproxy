@@ -77,24 +77,26 @@ func (p *Proxy) handleTCPConn(conn *net.TCPConn, targetAddr string, timeout int6
 	_ = client.SetKeepAlive(true)
 	_ = client.SetKeepAlivePeriod(time.Second * 15)
 
-	// buffered so the second copy goroutine can exit after the first one ends the connection
-	stop := make(chan bool, 2)
-
-	go func() {
-		_, err := io.Copy(client, conn)
-		if err != nil {
-			log.Println(err)
+	// Copy each direction until EOF, then forward the FIN with CloseWrite so a
+	// half-closed peer still gets the rest of the other side's data. Both
+	// connections are closed only once both directions finish, or as soon as
+	// either one fails. Buffered so the second goroutine can exit after an
+	// early return.
+	errc := make(chan error, 2)
+	pipe := func(dst, src *net.TCPConn) {
+		_, err := io.Copy(dst, src)
+		if err == nil {
+			err = dst.CloseWrite()
 		}
-		stop <- true
-	}()
+		errc <- err
+	}
+	go pipe(client, conn)
+	go pipe(conn, client)
 
-	go func() {
-		_, err := io.Copy(conn, client)
-		if err != nil {
+	for i := 0; i < 2; i++ {
+		if err := <-errc; err != nil {
 			log.Println(err)
+			return
 		}
-		stop <- true
-	}()
-
-	<-stop
+	}
 }
