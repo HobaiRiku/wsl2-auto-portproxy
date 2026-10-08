@@ -121,7 +121,7 @@ func TestLoopbackClientBypassesAllowlist(t *testing.T) {
 
 func TestHalfCloseDeliversFullResponse(t *testing.T) {
 	request := []byte("request payload")
-	// large enough to still be in flight when the client's FIN reaches the proxy
+	// several socket buffers worth, so the proxy keeps relaying long after the client half-closed
 	response := bytes.Repeat([]byte("0123456789abcdef"), 1<<16)
 
 	backend, err := net.Listen("tcp", "127.0.0.1:0")
