@@ -47,7 +47,7 @@ async function saveConfig() {
   try {
     const config = JSON.parse(configText.value)
     if (!config || Array.isArray(config) || typeof config !== 'object') throw new Error('配置必须是 JSON 对象')
-    loaded.value = await api.save({ revision: loaded.value.revision, config })
+    loaded.value = await api.save(loaded.value.revision, configText.value)
     configText.value = JSON.stringify(loaded.value.config, null, 2)
     notice.value = '配置已保存。端口应用结果请查看端口页面。'
     await service.refresh()

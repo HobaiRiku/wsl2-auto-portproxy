@@ -36,6 +36,9 @@ export const api = {
   connect: (code: string) => request('/connect', { method: 'POST', body: JSON.stringify({ code }) }),
   status: () => request<Status>('/status'),
   config: () => request<ConfigDocument>('/config'),
-  save: (document: ConfigDocument) => request<ConfigDocument>('/config', { method: 'PUT', body: JSON.stringify(document) }),
+  // Preserve editor text so the server can reject duplicate JSON fields.
+  save: (revision: string, configJSON: string) => request<ConfigDocument>('/config', {
+    method: 'PUT', body: `{"revision":${JSON.stringify(revision)},"config":${configJSON}}`
+  }),
   logs: () => request<LogEntry[]>('/logs')
 }

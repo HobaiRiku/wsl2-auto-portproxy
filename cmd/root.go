@@ -22,6 +22,7 @@ import (
 	"github.com/HobaiRiku/wsl2-auto-portproxy/internal/app"
 	"github.com/HobaiRiku/wsl2-auto-portproxy/internal/paths"
 	"github.com/HobaiRiku/wsl2-auto-portproxy/internal/windowsservice"
+	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/config"
 	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/service"
 	"github.com/spf13/cobra"
 )
@@ -133,7 +134,14 @@ func Execute(version string) error {
 		if len(data) > 1<<20 {
 			return errors.New("configuration exceeds 1 MiB")
 		}
-		doc.Config = data
+		parsed, err := config.Parse(data)
+		if err != nil {
+			return err
+		}
+		doc.Config, err = json.Marshal(parsed)
+		if err != nil {
+			return err
+		}
 		var saved json.RawMessage
 		if err := c.request("PUT", "/config", doc, &saved); err != nil {
 			return err
