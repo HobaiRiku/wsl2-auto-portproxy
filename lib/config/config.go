@@ -7,6 +7,7 @@ import (
 	"github.com/pkg/errors"
 	"io/ioutil"
 	"log"
+	"net"
 	"os/user"
 	"path"
 	"regexp"
@@ -18,6 +19,7 @@ type Config struct {
 	OnlyPredefined bool
 	Predefined     PredefinedPorts
 	Ignore         IgnorePorts
+	Allowlist      AllowlistRules
 }
 
 type PredefinedPorts struct {
@@ -31,7 +33,7 @@ type PortProxy struct {
 }
 
 func (pp PortProxy) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("$d:$d", pp.Local, pp.Remote)), nil
+	return []byte(fmt.Sprintf("%q", fmt.Sprintf("%d:%d", pp.Local, pp.Remote))), nil
 }
 
 func (pp *PortProxy) UnmarshalJSON(data []byte) error {
@@ -57,11 +59,64 @@ type IgnorePorts struct {
 	Udp []int64 `json:"udp"`
 }
 
+// AllowlistRules restricts which client IPs may connect, keyed by windows listen port.
+// Ports without rules are open to everyone.
+type AllowlistRules struct {
+	Tcp map[int64][]*net.IPNet
+}
+
+func (ar *AllowlistRules) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Tcp map[string][]string `json:"tcp"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	ar.Tcp = make(map[int64][]*net.IPNet, len(raw.Tcp))
+	for portStr, entries := range raw.Tcp {
+		port, err := strconv.ParseInt(portStr, 10, 64)
+		if err != nil || port <= 0 || port > 65535 {
+			return fmt.Errorf("allowlist: invalid port %q", portStr)
+		}
+		nets := make([]*net.IPNet, 0, len(entries))
+		for _, entry := range entries {
+			n, err := parseIPOrCIDR(entry)
+			if err != nil {
+				return fmt.Errorf("allowlist: port %d: %s", port, err)
+			}
+			nets = append(nets, n)
+		}
+		ar.Tcp[port] = nets
+	}
+	return nil
+}
+
+// parseIPOrCIDR accepts "192.168.1.5" or "192.168.1.0/24" (IPv6 as well).
+func parseIPOrCIDR(s string) (*net.IPNet, error) {
+	s = strings.TrimSpace(s)
+	if strings.Contains(s, "/") {
+		_, n, err := net.ParseCIDR(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CIDR %q", s)
+		}
+		return n, nil
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP %q", s)
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		return &net.IPNet{IP: ip4, Mask: net.CIDRMask(32, 32)}, nil
+	}
+	return &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}, nil
+}
+
 // JsonFile is a struct to unmarshal config file
 type JsonFile struct {
 	OnlyPredefined bool            `json:"onlyPredefined"`
 	Predefined     PredefinedPorts `json:"predefined"`
 	Ignore         IgnorePorts     `json:"ignore"`
+	Allowlist      AllowlistRules  `json:"allowlist"`
 }
 
 var jsonCommentRegexp = regexp.MustCompile(`/\*([\s\S]*?)\*/`)
