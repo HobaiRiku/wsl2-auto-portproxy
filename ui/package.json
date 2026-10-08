@@ -1,0 +1,23 @@
+{
+  "name": "wslpp-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "type-check": "vue-tsc --noEmit",
+    "build": "npm run type-check && vite build"
+  },
+  "dependencies": {
+    "naive-ui": "2.40.3",
+    "pinia": "2.3.1",
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "5.2.3",
+    "typescript": "5.8.3",
+    "vite": "6.4.4",
+    "vite-plugin-pwa": "0.21.1",
+    "vue-tsc": "2.2.10"
+  }
+}

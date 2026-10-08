@@ -1,3 +1,7 @@
 .idea
 config-demo.json
 dist
+ui/node_modules/
+internal/web/static/
+.wslpp-dev/
+*.test

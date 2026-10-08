@@ -1,0 +1,16 @@
+:root { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #25312d; background: #f5f6f8; font-synthesis: none; }
+body { margin: 0; } * { box-sizing: border-box; }
+.shell { max-width: 1120px; margin: auto; padding: 28px; }
+header, .header-right, .page-title, .brand, .actions { display: flex; align-items: center; gap: 16px; }
+header, .page-title { justify-content: space-between; }
+.brand img { width: 42px; height: 42px; } .brand strong { font-size: 24px; letter-spacing: -1px; } .brand span { display: block; font-size: 12px; color: #708079; }
+nav { display: flex; gap: 6px; border-bottom: 1px solid #dfe5e1; padding-top: 30px; margin-bottom: 28px; }
+nav button { border: 0; background: none; cursor: pointer; padding: 12px 20px; font: inherit; color: #69786f; border-bottom: 2px solid transparent; }
+nav button.active { color: #176b54; border-color: #176b54; font-weight: 600; }
+h1 { font-size: 25px; margin: 0; letter-spacing: -.5px; } p { margin: 8px 0; } .page-title { margin-bottom: 22px; } .page-title p, .muted { color: #738077; }
+.summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; } .value { font-size: 25px; }
+.alert { margin-bottom: 16px; } .table-wrap { overflow-x: auto; border: 1px solid #e0e6e2; border-radius: 8px; background: white; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; } th { text-align: left; color: #738077; font-weight: 500; background: #fafcfb; } th, td { padding: 15px 20px; border-bottom: 1px solid #edf0ed; white-space: nowrap; } tbody tr:last-child td { border: 0; } tr.selected { background: #f0f8f4; }
+.row-select { font: inherit; border: 0; background: none; color: #176b54; cursor: pointer; padding: 0; } .empty { padding: 44px 20px; text-align: center; color: #738077; } .details { margin-top: 16px; } .error { color: #b63d38; }
+.actions { margin-top: 18px; } .logs { list-style: none; padding: 0; margin: 0; } .logs li { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid #edf0ed; overflow-wrap: anywhere; } .logs time { color: #738077; } footer { color: #8b968f; font-size: 12px; margin-top: 32px; }
+@media (max-width: 640px) { .shell { padding: 18px; } .summary { grid-template-columns: 1fr; } .header-right { gap: 8px; } nav button { padding: 12px 15px; } .page-title { align-items: flex-start; } .logs li { flex-wrap: wrap; } }
