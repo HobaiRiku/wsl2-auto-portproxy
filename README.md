@@ -6,6 +6,7 @@ wsl2-auto-portProxy(wslpp) is a simple tool for proxying port of linux running i
 ## Feature
 - [x] TCP port support
 - [x] custom port proxy config, support live edit
+- [x] client IP allowlist per port
 - [ ] web interface
 - [ ] UDP port support
 
@@ -38,6 +39,8 @@ and use `wsl2-auto-portproxy.exe` to start proxy
 ## How it works
 wslpp start an interval to get IP address of the nat interface and scan all ports listening at all network in the subsystem, then use golang's `net` to start proxy direct to ports.
 
+When wsl is not running, wslpp stops all proxies and waits, it only checks the state by `wsl --list` and won't boot wsl again by itself.
+
 ## Configuration
 Support custom configuration by a json file, which must be placed in `%HOMEPATH%/.wslpp/config.json`, the `.wslpp` dir will be created automatically by wslpp when it runs, but the json file should be created by yourself.    
 Example:
@@ -53,12 +56,18 @@ Example:
     "tcp": [
       445
     ]
+  },
+  "allowlist": {
+    "tcp": {
+      "666": ["192.168.1.0/24", "10.0.0.5"]
+    }
   }
 }
 ```
 * onlyPredefined: If `true`, will only start port defined in `predefined` field.
 * predefined: Define the custom port to proxy, "666:22" means `windows(666)->linux(22)`, if undefined, port in windows will follow the same of linux. Must be a string array in the sub field name `tcp`.
 * ignore: If defined, will ignore the port in linux. Must be a number array in the sub field name `tcp`. 
+* allowlist: If defined, only clients from the listed IPs or CIDR ranges can connect to that port, others are disconnected immediately. Keys are the **windows** listen ports (`666` in the example above, not `22`), ports not listed are open to everyone. Clients on loopback (the windows host itself) are always allowed. Must be an object in the sub field name `tcp`.
 
 **Note: If port is already use by another program in windows, the port will be omitted**
 

@@ -5,7 +5,7 @@ import (
 	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/proxy"
 )
 
-var ProxyPool []proxy.Proxy
+var ProxyPool []*proxy.Proxy
 
 var WslIp string
 

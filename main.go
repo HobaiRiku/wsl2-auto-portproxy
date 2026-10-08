@@ -38,9 +38,33 @@ func main() {
 		}
 	}()
 
+	wslRunning := true
 	for {
 		// wait for a config update interval
 		<-ready
+		proxy.SetAllowlist(storage.C.Allowlist.Tcp)
+		// don't touch wsl when it's stopped, `wsl -- <cmd>` below would boot it again
+		running, err := service.IsWslRunning()
+		if err != nil && wslRunning {
+			log.Printf("check wsl state error: %s", err)
+		}
+		if !running {
+			if wslRunning {
+				log.Println("wsl is not running, stop all proxies and wait for it")
+			}
+			wslRunning = false
+			for _, p := range storage.ProxyPool {
+				if p.IsRunning {
+					_ = p.Stop()
+				}
+			}
+			storage.ProxyPool = nil
+			continue
+		}
+		if !wslRunning {
+			log.Println("wsl is running")
+		}
+		wslRunning = true
 		// get linux's ip
 		storage.WslIp, _ = service.GetWslIP()
 		// get all tcp ports in linux now
@@ -97,13 +121,13 @@ func main() {
 		// create proxy
 		for _, port := range needPorts {
 			omitted := false
-			for i, p := range storage.ProxyPool {
+			for _, p := range storage.ProxyPool {
 				if p.Port == port.Port {
 					omitted = true
 					// update WslIp and restart proxy (if changed)
 					if p.WslIp != storage.WslIp {
-						storage.ProxyPool[i].WslIp = storage.WslIp
 						_ = p.Stop()
+						p.WslIp = storage.WslIp
 					}
 					if !p.IsRunning {
 						err := p.Start()
@@ -115,7 +139,7 @@ func main() {
 				}
 			}
 			if !omitted {
-				newProxy := proxy.Proxy{Port: port.Port, ProxyPort: port.ProxyPort, Type: port.Type, WslIp: storage.WslIp}
+				newProxy := &proxy.Proxy{Port: port.Port, ProxyPort: port.ProxyPort, Type: port.Type, WslIp: storage.WslIp}
 				err := newProxy.Start()
 				if err != nil {
 					log.Printf("start proxy error,%s\n", err)
