@@ -1,36 +1,39 @@
-.PHONY:build clean test dev
-# Go parameters
-GOCMD=go
-GORUN=$(GOCMD) run
-GOBUILD=$(GOCMD) build
-GOCLEAN=$(GOCMD) clean
-GOTEST=$(GOCMD) test
-GOGET=$(GOCMD) get
+.PHONY: build release ui-install ui-build test race vet check dev clean
+GOCMD ?= go
+NPMCMD ?= npm
+VERSION ?= $(shell git describe --always --tags --dirty)
+LDFLAGS = -s -w -X main.version=$(VERSION)
 
-# name
-BINARY_NAME=wslpp
+ui-install:
+	cd ui && $(NPMCMD) ci
 
-# git version
-VERSION := $(shell git describe --always --tags  |sed -e "s/^v//")
+ui-build: ui-install
+	cd ui && $(NPMCMD) run build
 
-# LDFLAGS
-LDFLAGS = -ldflags "-s -w -X main.version=$(VERSION)"
+build: ui-build
+	mkdir -p dist
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GOCMD) build -trimpath -tags embedui -ldflags '$(LDFLAGS)' -o dist/wslpp.exe .
 
-
-build: mod-tidy
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GOBUILD) \
-	 $(LDFLAGS)  -o ./dist/$(BINARY_NAME).exe
+release: ui-build
+	mkdir -p dist
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GOCMD) build -trimpath -tags embedui -ldflags '$(LDFLAGS)' -o dist/wslpp-windows-amd64.exe .
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GOCMD) build -trimpath -tags embedui -ldflags '$(LDFLAGS)' -o dist/wslpp-windows-arm64.exe .
+	cd dist && sha256sum wslpp-windows-amd64.exe wslpp-windows-arm64.exe > SHA256SUMS
 
 test:
-	$(GOTEST) -v ./...
+	$(GOCMD) test ./...
+
+race:
+	$(GOCMD) test -race ./...
+
+vet:
+	$(GOCMD) vet ./...
+
+check: test race vet ui-build
+
+# Start Vite separately with `cd ui && npm run dev`.
+dev:
+	$(GOCMD) run . run --home .wslpp-dev --ui-dev
 
 clean:
-	$(GOCLEAN)
-	@rm -f ./dist/$(BINARY_NAME)_*
-
-mod-tidy:
-	$(GOCMD) mod tidy
-
-dev:
-	$(GORUN) ./main.go
-
+	rm -rf dist internal/web/static
