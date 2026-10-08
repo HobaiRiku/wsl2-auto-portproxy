@@ -69,6 +69,8 @@ Example:
 * ignore: If defined, will ignore the port in linux. Must be a number array in the sub field name `tcp`. 
 * allowlist: If defined, only clients from the listed IPs or CIDR ranges can connect to that port, others are disconnected immediately. Keys are the **windows** listen ports (`666` in the example above, not `22`), ports not listed are open to everyone. Clients on loopback (the windows host itself) are always allowed. Must be an object in the sub field name `tcp`.
 
+**Note: If the config file is invalid when wslpp starts, no proxy is started until it is fixed; an invalid edit later keeps the last valid config.**
+
 **Note: If port is already use by another program in windows, the port will be omitted**
 
 ## About `wslhost.exe`

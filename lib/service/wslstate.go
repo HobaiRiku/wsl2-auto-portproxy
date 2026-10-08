@@ -2,35 +2,51 @@ package service
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
 	"unicode/utf16"
 )
 
+// defaultDistro caches the name of the default distribution, it is only
+// looked up again when it isn't among the running ones.
+var defaultDistro string
+
 // IsWslRunning reports whether the default wsl distribution is running.
 // Only `wsl --list` commands are used here, they never boot the wsl vm,
 // unlike `wsl -- <cmd>`, so polling this keeps a stopped wsl stopped.
 func IsWslRunning() (bool, error) {
-	all, err := wslList("--list", "--verbose")
+	out, err := wslList("--list", "--running", "--quiet")
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			// wsl exits with non-zero status when there are no running distributions
+			return false, nil
+		}
 		return false, err
 	}
-	defaultDistro := parseDefaultDistro(all)
-	if defaultDistro == "" {
-		return false, nil
+	running := parseLines(out)
+	if !containsFold(running, defaultDistro) {
+		all, err := wslList("--list", "--verbose")
+		if err != nil {
+			return false, err
+		}
+		defaultDistro = parseDefaultDistro(all)
 	}
-	// exits with non-zero status when there are no running distributions
-	running, err := wslList("--list", "--running", "--quiet")
-	if err != nil {
-		return false, nil
+	return containsFold(running, defaultDistro), nil
+}
+
+func containsFold(names []string, name string) bool {
+	if name == "" {
+		return false
 	}
-	for _, name := range parseLines(running) {
-		if strings.EqualFold(name, defaultDistro) {
-			return true, nil
+	for _, n := range names {
+		if strings.EqualFold(n, name) {
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 func wslList(args ...string) (string, error) {

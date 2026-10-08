@@ -52,3 +52,11 @@ func TestPortProxyMarshal(t *testing.T) {
 		t.Errorf("got %s", b)
 	}
 }
+
+func TestAllowlistUnmarshalDuplicatePort(t *testing.T) {
+	var c Config
+	err := json.Unmarshal([]byte(`{"allowlist": {"tcp": {"666": ["10.0.0.0/8"], "0666": ["192.168.1.5"]}}}`), &c)
+	if err == nil {
+		t.Error("expected error for duplicate port")
+	}
+}
