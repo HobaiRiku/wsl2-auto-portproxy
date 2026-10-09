@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +13,7 @@ import (
 
 type stoppedScanner struct{}
 
-func (stoppedScanner) Scan(context.Context) (service.Snapshot, error) {
+func (stoppedScanner) Scan(context.Context, string) (service.Snapshot, error) {
 	now := time.Now()
 	return service.Snapshot{State: "stopped", Distro: "Test", NetworkMode: "unknown", LastScan: &now}, nil
 }
@@ -41,7 +40,10 @@ func TestAppReservesEndpointAndShutsDown(t *testing.T) {
 			}
 		}
 	}
-	response, err := http.Get(endpoint + "/api/health")
+	// Without keep-alives the transport cannot leave a spare, request-less
+	// connection open, which http.Server.Shutdown waits up to 5s for.
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	response, err := client.Get(endpoint + "/api/health")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,13 +51,7 @@ func TestAppReservesEndpointAndShutsDown(t *testing.T) {
 	if response.StatusCode != 200 {
 		t.Fatal(response.StatusCode)
 	}
-	token, err := os.ReadFile(filepath.Join(home, "token"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req, _ := http.NewRequest("GET", endpoint+"/api/status", nil)
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
-	response, err = http.DefaultClient.Do(req)
+	response, err = client.Get(endpoint + "/api/status")
 	if err != nil {
 		t.Fatal(err)
 	}

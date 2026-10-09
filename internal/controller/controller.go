@@ -17,7 +17,7 @@ import (
 )
 
 type Scanner interface {
-	Scan(context.Context) (service.Snapshot, error)
+	Scan(ctx context.Context, distro string) (service.Snapshot, error)
 }
 type Route struct {
 	Distro   string
@@ -43,8 +43,18 @@ type ProxyStatus struct {
 }
 type Status struct {
 	WSL         service.Snapshot `json:"wsl"`
+	Discovered  []Discovered     `json:"discovered"`
 	Proxies     []ProxyStatus    `json:"proxies"`
 	ConfigError string           `json:"configError,omitempty"`
+}
+
+// Discovered explains what the planner did with one WSL port, so "why is this
+// port not forwarded" can be answered without reading the config rules.
+type Discovered struct {
+	Protocol string  `json:"protocol"`
+	Port     int64   `json:"port"`
+	Decision string  `json:"decision"` // forwarded, blocked, ignored, udp-disabled, not-predefined, conflict, not-listening
+	Local    []int64 `json:"local,omitempty"`
 }
 type resource struct {
 	route   Route
@@ -64,6 +74,7 @@ type Controller struct {
 	lastOK         time.Time
 	problem        string
 	managementPort int
+	discovered     []Discovered
 }
 
 func New(r *registry.Registry, s Scanner, logger *slog.Logger, managementPort int) *Controller {
@@ -137,13 +148,80 @@ func Plan(c config.Config, s service.Snapshot) []Route {
 	sort.Slice(routes, func(i, j int) bool { return routes[i].ID() < routes[j].ID() })
 	return routes
 }
+
+// Explain mirrors Plan's rules for every discovered port, plus explicit
+// mappings whose WSL port is not listening.
+func Explain(c config.Config, s service.Snapshot) []Discovered {
+	planned := map[string]Route{}
+	for _, r := range Plan(c, s) {
+		planned[r.ID()] = r
+	}
+	contains := func(ports []int64, port int64) bool {
+		for _, p := range ports {
+			if p == port {
+				return true
+			}
+		}
+		return false
+	}
+	out := []Discovered{}
+	listening := map[string]bool{}
+	for _, p := range s.Ports {
+		listening[p.Type+"/"+strconv.FormatInt(p.Port, 10)] = true
+		d := Discovered{Protocol: p.Type, Port: p.Port}
+		ignore, mappings := c.Ignore.Tcp, c.Predefined.Tcp
+		if p.Type == "udp" {
+			ignore, mappings = c.Ignore.Udp, c.Predefined.Udp
+		}
+		for _, r := range planned {
+			if r.Protocol == p.Type && r.Remote == p.Port {
+				d.Local = append(d.Local, r.Local)
+			}
+		}
+		sort.Slice(d.Local, func(i, j int) bool { return d.Local[i] < d.Local[j] })
+		mapped := false
+		for _, m := range mappings {
+			mapped = mapped || m.Remote == p.Port
+		}
+		switch {
+		case p.Type == "udp" && !c.UDPEnabled:
+			d.Decision = "udp-disabled"
+		case contains(ignore, p.Port):
+			d.Decision = "ignored"
+		case len(d.Local) > 0:
+			d.Decision = "forwarded"
+		case c.OnlyPredefined && !mapped:
+			d.Decision = "not-predefined"
+		default:
+			// The same-number Windows port is taken by an explicit mapping.
+			d.Decision = "conflict"
+		}
+		out = append(out, d)
+	}
+	for protocol, mappings := range map[string][]config.PortProxy{"tcp": c.Predefined.Tcp, "udp": c.Predefined.Udp} {
+		for _, m := range mappings {
+			if !listening[protocol+"/"+strconv.FormatInt(m.Remote, 10)] {
+				out = append(out, Discovered{Protocol: protocol, Port: m.Remote, Decision: "not-listening", Local: []int64{m.Local}})
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Protocol != out[j].Protocol {
+			return out[i].Protocol < out[j].Protocol
+		}
+		return out[i].Port < out[j].Port
+	})
+	return out
+}
 func (c *Controller) Run(ctx context.Context) {
 	defer c.Stop()
-	ticker := time.NewTicker(time.Second)
+	// Each scan spawns wsl.exe three times; config edits wake the loop early.
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
 		c.registry.Reload()
-		snapshot, err := c.scanner.Scan(ctx)
+		doc, _, _ := c.registry.Snapshot()
+		snapshot, err := c.scanner.Scan(ctx, doc.Config.Distro)
 		if ctx.Err() != nil {
 			return
 		}
@@ -161,6 +239,7 @@ func (c *Controller) Reconcile(ctx context.Context, s service.Snapshot, scanErr 
 	defer c.mu.Unlock()
 	doc, ready, problem := c.registry.Snapshot()
 	c.problem = problem
+	c.discovered = nil
 	if scanErr != nil {
 		if c.observed.Error != scanErr.Error() {
 			c.logger.Warn("WSL discovery failed", "error", scanErr)
@@ -180,6 +259,9 @@ func (c *Controller) Reconcile(ctx context.Context, s service.Snapshot, scanErr 
 		c.observed.Error = ""
 		c.last = s
 		c.lastOK = now
+	}
+	if ready && s.State == "running" && s.NetworkMode == "nat" {
+		c.discovered = Explain(doc.Config, s)
 	}
 	if !ready || s.State != "running" || s.NetworkMode != "nat" || net.ParseIP(s.IP) == nil {
 		c.stopLocked()
@@ -258,7 +340,7 @@ func (c *Controller) Stop() { c.mu.Lock(); defer c.mu.Unlock(); c.stopLocked() }
 func (c *Controller) Status() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	out := Status{WSL: c.observed, Proxies: make([]ProxyStatus, 0, len(c.resources)), ConfigError: c.problem}
+	out := Status{WSL: c.observed, Discovered: append([]Discovered{}, c.discovered...), Proxies: make([]ProxyStatus, 0, len(c.resources)), ConfigError: c.problem}
 	for id, entry := range c.resources {
 		state := "blocked"
 		stats := proxy.Stats{Error: entry.err}
@@ -276,6 +358,26 @@ func (c *Controller) Status() Status {
 		out.Proxies = append(out.Proxies, ProxyStatus{ID: id, Protocol: entry.route.Protocol, Listen: entry.route.Listen, Target: entry.route.Target, State: state, Stats: stats})
 	}
 	sort.Slice(out.Proxies, func(i, j int) bool { return out.Proxies[i].ID < out.Proxies[j].ID })
+	// A planned route only counts as forwarded once some Windows port is bound.
+	active := map[string]bool{}
+	for _, p := range out.Proxies {
+		if p.State == "active" || p.State == "stale" {
+			_, port, _ := net.SplitHostPort(p.Listen)
+			active[p.Protocol+"/"+port] = true
+		}
+	}
+	for i, d := range out.Discovered {
+		if d.Decision != "forwarded" {
+			continue
+		}
+		bound := false
+		for _, local := range d.Local {
+			bound = bound || active[d.Protocol+"/"+strconv.FormatInt(local, 10)]
+		}
+		if !bound {
+			out.Discovered[i].Decision = "blocked"
+		}
+	}
 	return out
 }
 func (c *Controller) String() string {

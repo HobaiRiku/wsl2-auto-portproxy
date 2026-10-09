@@ -1,6 +1,7 @@
 package service
 
 import (
+	"reflect"
 	"testing"
 	"unicode/utf16"
 )
@@ -38,15 +39,19 @@ func TestDecodeWslOutput(t *testing.T) {
 	}
 }
 
-func TestParseDefaultDistro(t *testing.T) {
-	if got := parseDefaultDistro(listVerbose); got != "Ubuntu-22.04" {
-		t.Errorf("got %q", got)
+func TestParseDistros(t *testing.T) {
+	got := parseDistros(listVerbose)
+	want := []Distro{{Name: "Ubuntu-22.04", Default: true, Version: "2"}, {Name: "Debian", Version: "2"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v", got)
 	}
-	if got := parseDefaultDistro(listVerboseZh); got != "Ubuntu" {
-		t.Errorf("got %q", got)
+	got = parseDistros(listVerboseZh)
+	want = []Distro{{Name: "Debian", Version: "2"}, {Name: "Ubuntu", Default: true, Version: "2"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v", got)
 	}
-	if got := parseDefaultDistro(""); got != "" {
-		t.Errorf("got %q", got)
+	if got := parseDistros(""); len(got) != 0 {
+		t.Errorf("got %+v", got)
 	}
 }
 

@@ -29,11 +29,23 @@ func (r CommandRunner) Output(ctx context.Context, args ...string) ([]byte, erro
 	cmd := exec.CommandContext(ctx, "wsl.exe", args...)
 	cmd.Env = append(os.Environ(), "WSL_UTF8=1")
 	cmd.WaitDelay = time.Second
+	hideWindow(cmd)
 	out, err := cmd.Output()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 	if err != nil {
+		detail := ""
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			detail = strings.TrimSpace(decodeWslOutput(exit.Stderr))
+		}
+		if detail == "" {
+			detail = strings.TrimSpace(decodeWslOutput(out))
+		}
+		if detail != "" {
+			return nil, fmt.Errorf("wsl %s: %w: %s", strings.Join(args, " "), err, detail)
+		}
 		return nil, fmt.Errorf("wsl %s: %w", strings.Join(args, " "), err)
 	}
 	return out, nil
@@ -48,30 +60,65 @@ type Snapshot struct {
 	Error       string     `json:"error,omitempty"`
 	Ports       []Port     `json:"-"`
 }
-type Scanner struct {
-	Runner    Runner
-	LegacyNAT bool
+
+// Distro is one row of `wsl --list --verbose`.
+type Distro struct {
+	Name    string `json:"name"`
+	Default bool   `json:"default"`
+	Version string `json:"version"`
 }
 
-func (s Scanner) State(ctx context.Context) (Snapshot, error) {
-	r := s.Runner
-	if r == nil {
-		r = CommandRunner{}
+type Scanner struct {
+	Runner Runner
+}
+
+func (s Scanner) runner() Runner {
+	if s.Runner == nil {
+		return CommandRunner{}
 	}
+	return s.Runner
+}
+
+// Distros lists installed distributions without starting any of them.
+func (s Scanner) Distros(ctx context.Context) ([]Distro, error) {
+	out, err := s.runner().Output(ctx, "--list", "--verbose")
+	if err != nil {
+		return nil, err
+	}
+	return parseDistros(decodeWslOutput(out)), nil
+}
+
+// State resolves the target distribution (the configured one, or the WSL
+// default when distro is empty) and whether it is running. It never executes
+// a Linux command, so it cannot boot a stopped distribution.
+func (s Scanner) State(ctx context.Context, distro string) (Snapshot, error) {
 	state := Snapshot{State: "unknown", NetworkMode: "unknown"}
-	all, err := r.Output(ctx, "--list", "--verbose")
+	distros, err := s.Distros(ctx)
 	if err != nil {
 		return state, err
 	}
-	state.Distro = parseDefaultDistro(decodeWslOutput(all))
-	if state.Distro == "" {
-		return state, errors.New("no default WSL distribution visible to the service account")
+	var target *Distro
+	for i := range distros {
+		if (distro == "" && distros[i].Default) || (distro != "" && strings.EqualFold(distros[i].Name, distro)) {
+			target = &distros[i]
+			break
+		}
 	}
-	version := defaultVersion(decodeWslOutput(all))
-	if version != "2" {
-		return state, fmt.Errorf("default distribution %q must use WSL2", state.Distro)
+	if target == nil {
+		if distro == "" {
+			return state, errors.New("no default WSL distribution visible to this Windows account")
+		}
+		names := make([]string, len(distros))
+		for i, d := range distros {
+			names[i] = d.Name
+		}
+		return state, fmt.Errorf("WSL distribution %q not found (installed: %s)", distro, strings.Join(names, ", "))
 	}
-	running, err := r.Output(ctx, "--list", "--running", "--quiet")
+	state.Distro = target.Name
+	if target.Version != "2" {
+		return state, fmt.Errorf("distribution %q must use WSL2", state.Distro)
+	}
+	running, err := s.runner().Output(ctx, "--list", "--running", "--quiet")
 	if err != nil {
 		return state, err
 	}
@@ -81,8 +128,14 @@ func (s Scanner) State(ctx context.Context) (Snapshot, error) {
 	}
 	return state, nil
 }
-func (s Scanner) Scan(ctx context.Context) (Snapshot, error) {
-	state, err := s.State(ctx)
+
+// probeScript gathers everything from inside the distribution in a single
+// wsl.exe call. wslinfo lives in /usr/bin on current WSL (a link to /init);
+// releases without it predate mirrored networking, so they are NAT.
+const probeScript = `m=$(wslinfo --networking-mode 2>/dev/null || /usr/lib/wsl/wslinfo --networking-mode 2>/dev/null); m=${m:-nat}; echo "@@mode $m"; [ "$m" = nat ] || exit 0; echo @@ip; ip -j -4 address show dev eth0 2>&1 || echo "@@error ip"; echo @@ports; ss -H -l -n -t -u 2>&1 || echo "@@error ss"`
+
+func (s Scanner) Scan(ctx context.Context, distro string) (Snapshot, error) {
+	state, err := s.State(ctx, distro)
 	if err != nil {
 		return state, err
 	}
@@ -91,50 +144,27 @@ func (s Scanner) Scan(ctx context.Context) (Snapshot, error) {
 		state.LastScan = &now
 		return state, nil
 	}
-	r := s.Runner
-	if r == nil {
-		r = CommandRunner{}
-	}
-	args := []string{"--distribution", state.Distro, "--exec"}
-	mode, err := r.Output(ctx, append(args, "/usr/lib/wsl/wslinfo", "--networking-mode")...)
+	// WSL has no atomic 'execute only if running'; a distribution stopping
+	// between State and this call is the remaining, documented race.
+	out, err := s.runner().Output(ctx, "--distribution", state.Distro, "--exec", "sh", "-c", probeScript)
 	if err != nil {
-		if ctx.Err() != nil {
-			return state, ctx.Err()
-		}
-		if !s.LegacyNAT {
-			return state, fmt.Errorf("cannot determine WSL networking mode: %w; use --legacy-nat only for verified older NAT installations", err)
-		}
-		state.NetworkMode = "nat"
-	} else {
-		state.NetworkMode = strings.ToLower(strings.TrimSpace(decodeWslOutput(mode)))
+		return state, err
 	}
+	sections, err := parseProbe(decodeWslOutput(out))
+	if err != nil {
+		return state, err
+	}
+	state.NetworkMode = strings.ToLower(strings.TrimSpace(sections["mode"]))
 	if state.NetworkMode != "nat" {
 		now := time.Now()
 		state.LastScan = &now
 		return state, nil
 	}
-	addresses, err := r.Output(ctx, append(args, "ip", "-j", "-4", "address", "show", "dev", "eth0")...)
+	state.IP, err = parseAddress([]byte(sections["ip"]))
 	if err != nil {
 		return state, err
 	}
-	state.IP, err = parseAddress(addresses)
-	if err != nil {
-		return state, err
-	}
-	// Recheck immediately before commands that may start a distribution. WSL has
-	// no atomic 'execute only if running'; the remaining OS race is documented.
-	latest, err := s.State(ctx)
-	if err != nil {
-		return state, err
-	}
-	if latest.State != "running" || latest.Distro != state.Distro {
-		return latest, nil
-	}
-	ports, err := r.Output(ctx, append(args, "ss", "-H", "-l", "-n", "-t", "-u")...)
-	if err != nil {
-		return state, err
-	}
-	state.Ports, err = ParseLinuxPorts(string(ports))
+	state.Ports, err = ParseLinuxPorts(sections["ports"], state.IP)
 	if err != nil {
 		return state, err
 	}
@@ -142,16 +172,29 @@ func (s Scanner) Scan(ctx context.Context) (Snapshot, error) {
 	state.LastScan = &now
 	return state, nil
 }
-func defaultVersion(out string) string {
-	for _, line := range parseLines(out) {
-		if strings.HasPrefix(line, "*") {
-			fields := strings.Fields(line)
-			if len(fields) >= 4 {
-				return fields[len(fields)-1]
+
+// parseProbe splits probeScript output into its "@@name" sections.
+func parseProbe(out string) (map[string]string, error) {
+	sections := map[string]string{}
+	current := ""
+	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		if strings.HasPrefix(line, "@@") {
+			name, value, _ := strings.Cut(strings.TrimPrefix(line, "@@"), " ")
+			if name == "error" {
+				return nil, fmt.Errorf("WSL %s command failed: %s", value, strings.TrimSpace(sections[current]))
 			}
+			current = name
+			sections[name] = strings.TrimSpace(value)
+			continue
+		}
+		if current != "" {
+			sections[current] += line + "\n"
 		}
 	}
-	return ""
+	if _, ok := sections["mode"]; !ok {
+		return nil, fmt.Errorf("unexpected WSL probe output: %q", strings.TrimSpace(out))
+	}
+	return sections, nil
 }
 func parseAddress(data []byte) (string, error) {
 	var devices []struct {
@@ -162,7 +205,7 @@ func parseAddress(data []byte) (string, error) {
 		} `json:"addr_info"`
 	}
 	if err := json.Unmarshal(data, &devices); err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot parse WSL eth0 address: %w", err)
 	}
 	for _, device := range devices {
 		for _, a := range device.Addresses {
@@ -174,7 +217,10 @@ func parseAddress(data []byte) (string, error) {
 	}
 	return "", errors.New("no global IPv4 address on WSL eth0")
 }
-func ParseLinuxPorts(out string) ([]Port, error) {
+
+// ParseLinuxPorts returns listeners reachable through the WSL NAT address:
+// wildcard binds plus binds on any of the given addresses.
+func ParseLinuxPorts(out string, addresses ...string) ([]Port, error) {
 	ports := make([]Port, 0)
 	seen := map[string]bool{}
 	for _, line := range parseLines(out) {
@@ -196,7 +242,7 @@ func ParseLinuxPorts(out string) ([]Port, error) {
 		if err != nil || port <= 0 || port > 65535 {
 			return nil, fmt.Errorf("invalid ss port %q", endpoint)
 		}
-		if host != "*" && host != "0.0.0.0" && host != "::" {
+		if host != "*" && host != "0.0.0.0" && host != "::" && !containsFold(addresses, host) {
 			continue
 		}
 		key := protocol + ":" + strconv.FormatInt(port, 10)

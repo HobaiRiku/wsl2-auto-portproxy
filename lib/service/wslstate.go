@@ -2,16 +2,9 @@ package service
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"unicode/utf16"
 )
-
-// IsWslRunning checks state without executing a Linux command.
-func IsWslRunning() (bool, error) {
-	state, err := (Scanner{}).State(context.Background())
-	return state.State == "running", err
-}
 
 func containsFold(names []string, name string) bool {
 	if name == "" {
@@ -41,20 +34,23 @@ func decodeWslOutput(b []byte) string {
 	return string(utf16.Decode(u))
 }
 
-// parseDefaultDistro returns the distribution marked with '*' in the
-// output of `wsl --list --verbose`. Only the marker and the name column
-// are used, so localized headers and states don't matter.
-func parseDefaultDistro(out string) string {
-	for _, line := range parseLines(out) {
-		if !strings.HasPrefix(line, "*") {
+// parseDistros reads `wsl --list --verbose`. Only the default marker, the
+// last column (version) and the name are used, so localized headers and
+// states don't matter. Names may contain spaces; states are one word.
+func parseDistros(out string) []Distro {
+	var distros []Distro
+	for i, line := range parseLines(out) {
+		if i == 0 && !strings.HasPrefix(line, "*") {
+			continue // header
+		}
+		isDefault := strings.HasPrefix(line, "*")
+		fields := strings.Fields(strings.TrimPrefix(line, "*"))
+		if len(fields) < 3 {
 			continue
 		}
-		fields := strings.Fields(strings.TrimPrefix(line, "*"))
-		if len(fields) >= 3 {
-			return strings.Join(fields[:len(fields)-2], " ")
-		}
+		distros = append(distros, Distro{Name: strings.Join(fields[:len(fields)-2], " "), Default: isDefault, Version: fields[len(fields)-1]})
 	}
-	return ""
+	return distros
 }
 
 // parseLines splits output into trimmed non-empty lines.

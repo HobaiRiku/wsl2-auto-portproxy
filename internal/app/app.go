@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -28,12 +26,11 @@ import (
 )
 
 type Options struct {
-	Home      string
-	Listen    string
-	Version   string
-	LegacyNAT bool
-	DevUI     bool
-	Scanner   controller.Scanner
+	Home    string
+	Listen  string
+	Version string
+	DevUI   bool
+	Scanner controller.Scanner
 }
 
 func Run(ctx context.Context, o Options) error {
@@ -46,6 +43,9 @@ func Run(ctx context.Context, o Options) error {
 	}
 	release, err := paths.Lock(home)
 	if err != nil {
+		if endpoint, readErr := os.ReadFile(filepath.Join(home, "endpoint")); readErr == nil {
+			return fmt.Errorf("wslpp is already running for %s; open %s/ (stop it first, or use --home for a separate instance)", home, strings.TrimSpace(string(endpoint)))
+		}
 		return err
 	}
 	defer release()
@@ -67,18 +67,18 @@ func Run(ctx context.Context, o Options) error {
 	o.Listen = listener.Addr().String()
 	_, actualPort, _ := net.SplitHostPort(o.Listen)
 	port, _ = strconv.Atoi(actualPort)
-	token, err := loadToken(filepath.Join(home, "token"))
-	if err != nil {
-		return err
-	}
+	// Earlier builds wrote an API token; the API no longer uses one.
+	os.Remove(filepath.Join(home, "token"))
 	rotating := &lumberjack.Logger{Filename: filepath.Join(home, "wslpp.log"), MaxSize: 10, MaxBackups: 3, MaxAge: 7}
 	defer rotating.Close()
 	buffer := &logbuffer.Buffer{}
 	logger := slog.New(logbuffer.Handler{Buffer: buffer, Next: slog.NewJSONHandler(io.MultiWriter(os.Stderr, rotating), nil)})
 	r := registry.New(filepath.Join(home, "config.json"))
 	scanner := o.Scanner
+	var distros func(context.Context) ([]service.Distro, error)
 	if scanner == nil {
-		scanner = service.Scanner{LegacyNAT: o.LegacyNAT}
+		real := service.Scanner{}
+		scanner, distros = real, real.Distros
 	}
 	c := controller.New(r, scanner, logger, port)
 	runtimeCtx, cancel := context.WithCancel(ctx)
@@ -87,7 +87,7 @@ func Run(ctx context.Context, o Options) error {
 	go func() { defer close(done); c.Run(runtimeCtx) }()
 	defer func() { cancel(); <-done }()
 	started := time.Now()
-	router := api.New(api.Options{Registry: r, Controller: c, Logs: buffer, Token: token, Version: o.Version, Started: started, Port: port, DevUI: o.DevUI, Web: web.Handler()})
+	router := api.New(api.Options{Registry: r, Controller: c, Logs: buffer, Version: o.Version, Started: started, Port: port, DevUI: o.DevUI, Web: web.Handler(), Distros: distros})
 	server := &http.Server{Handler: router, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	if err := atomicfile.Write(filepath.Join(home, "endpoint"), []byte("http://"+o.Listen), 0600); err != nil {
 		return err
@@ -103,7 +103,7 @@ func Run(ctx context.Context, o Options) error {
 			server.Close()
 		}
 	}()
-	logger.Info("wslpp running", "listen", o.Listen, "version", o.Version)
+	logger.Info("wslpp running", "ui", "http://"+o.Listen+"/", "version", o.Version)
 	err = server.Serve(listener)
 	cancel()
 	<-shutdownDone
@@ -111,27 +111,4 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	return nil
-}
-func loadToken(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err == nil {
-		token := strings.TrimSpace(string(data))
-		decoded, e := hex.DecodeString(token)
-		if e != nil || len(decoded) != 32 {
-			return "", fmt.Errorf("invalid token file %s", path)
-		}
-		return token, nil
-	}
-	if !os.IsNotExist(err) {
-		return "", err
-	}
-	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	token := hex.EncodeToString(b[:])
-	if err := atomicfile.Write(path, []byte(token), 0600); err != nil {
-		return "", err
-	}
-	return token, nil
 }

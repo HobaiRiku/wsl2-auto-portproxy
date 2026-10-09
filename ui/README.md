@@ -4,9 +4,9 @@ Vue 3 + TypeScript + Pinia + Naive UI + Vite PWA 的初始管理界面。API 类
 
 ```bash
 cd ui
-npm ci
-npm run dev
-npm run build
+corepack pnpm install
+corepack pnpm run dev
+corepack pnpm run build
 ```
 
 开发服务只绑定本机。`/api` 默认转发到 `http://127.0.0.1:47831`。构建输出至 `internal/web/static`，由 Go 发布构建嵌入。未连接后端时显示不可达状态，不使用演示数据。

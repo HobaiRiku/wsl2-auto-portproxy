@@ -1,37 +1,39 @@
 # wslpp
 
-Windows 上的 WSL2 TCP/UDP 端口转发工具。扫描默认 WSL2 发行版在 wildcard 地址上监听的端口，将 Windows 监听端口转发到 WSL 的 NAT 地址；支持映射、忽略和按协议设置访问规则。
+Windows 上的 WSL2 TCP/UDP 端口转发工具。扫描 WSL2 发行版（默认发行版，或配置的 `distro`）在 wildcard / eth0 地址上监听的端口，将 Windows 监听端口转发到 WSL 的 NAT 地址；支持映射、忽略和按协议设置访问规则。
 
 当前重构提供简洁的 Vue 管理界面、本机 API 和 Windows SCM 安装入口。**未登录账户的 WSL/Session 0 行为仍须按目标 Windows/WSL 版本实机验收**，现有交叉编译结果不代表该场景已验证。详见 [实施状态与验收](docs/design/implementation-status.md)。
 
 ## 范围
 
-- 默认 WSL2 发行版、NAT；依赖发行版中的 `iproute2`（`ip` / `ss`）。
+- 一个 WSL2 发行版（默认跟随 `wsl --set-default`，可用 `distro` 固定）、NAT；依赖发行版中的 `iproute2`（`ip` / `ss`）。每 2 秒扫描一次，每次 3 次 wsl.exe 调用（列表、运行状态、发行版内一次合并探测）。
 - 识别实际 mirrored / 其他网络模式，显示状态并停止自身转发，避免回连自身。
 - TCP 默认启用；UDP 需显式设置 `udpEnabled: true`。UDP 支持固定目标的 unicast 报文，客户端 session 独立，不支持广播、组播和透明源地址。
 - WSL 已停止时只查询状态并等待；服务自动启动不代表自动启动 WSL。状态查询与随后执行 Linux 命令之间仍有 OS 级竞态，无法承诺原子“不唤醒”。
-- 有 `wslinfo --networking-mode` 的 WSL 版本自动识别模式；旧 WSL 无此能力时停止转发。确认旧版本处于 NAT 后可显式使用 `--legacy-nat`。
+- 通过发行版内的 `wslinfo --networking-mode`（当前 WSL 在 `/usr/bin/wslinfo`）识别网络模式；没有 wslinfo 的旧 WSL 不支持 mirrored，按 NAT 处理。
 
 ## 构建与开发
 
-需要 Go 1.24+、Node.js 22+、npm。Windows 原生 race 测试还需要 C 编译器。
+需要 Go、Node.js 22+（自带 corepack，用于 pnpm）、GNU make。Windows 上 make 会自动使用 Git for Windows 的 sh，可直接在 PowerShell 中运行（`winget install ezwinports.make`）。
 
 ```bash
-make build                         # dist/wslpp.exe，嵌入 UI
-make release                       # Windows amd64/arm64 + SHA256SUMS
-make test
-make race
-make vet
+make build            # build/bin/wslpp.exe，嵌入 UI
+make dist             # build/dist：Windows amd64/arm64 + SHA256SUMS
+make check            # fmt-check + vet + test + ui-lint + ui-build
+make test / vet / fmt / tidy
+make race             # 需要 gcc（cgo）
+make release-snapshot # 本地 GoReleaser 试跑；推送 v* tag 由 CI 发布
+make print-version
 ```
 
 开发模式开启两个终端：
 
 ```bash
-make dev                           # --home .wslpp-dev --ui-dev
-cd ui && npm ci && npm run dev      # http://127.0.0.1:5173
+make dev              # 数据目录 .wslpp-dev，允许 Vite 开发 origin
+make ui-dev           # http://127.0.0.1:5173
 ```
 
-在 Windows 上执行 `wslpp ui --home .wslpp-dev --ui-dev` 建立授权。Linux 可运行核心/API 测试和 UI 开发，但没有 Windows WSL 发现或服务管理能力。直接 `go build .` 不嵌入页面；发布构建需先构建 UI，再加 `-tags embedui`。
+直接 `go build .` 不嵌入页面；发布构建需先构建 UI，再加 `-tags embedui`。
 
 ## 运行与管理
 
@@ -46,7 +48,9 @@ cd ui && npm ci && npm run dev      # http://127.0.0.1:5173
 
 无参数启动与原来的前台方式兼容；`-v` / `version` 输出版本。前台默认数据目录为 `%USERPROFILE%\.wslpp`，可由 `--home` 或 `WSLPP_HOME` 指定。API 默认 `127.0.0.1:47831`；可用 `--listen` 指定其他 loopback 端口。
 
-`ui` 通过受目录权限保护的本机 token 申请一分钟有效的一次性链接，浏览器建立 HttpOnly 会话。复制该链接也能在同一台机器上打开；失效后重新运行 `ui`。PWA 只缓存静态资源，API、授权和 HTML 不缓存；服务不可达时禁用保存。
+管理界面和 API 没有登录：只监听 loopback，并且只接受 loopback 来源、loopback Host 和同源 Origin 的请求，阻止远程访问、DNS rebinding 和网页跨站请求。`ui` 直接在浏览器打开 `http://127.0.0.1:47831/`。注意：本机任何用户/进程都能访问该端口并修改配置。PWA 只缓存静态资源；服务不可达时禁用保存。
+
+`doctor [--distro 名称]` 列出已安装发行版，并输出目标发行版的状态、网络模式、IP 和发现的端口。
 
 UI 当前只实现概览、端口表格、JSON 配置和最近日志，后续视觉与框架调整可以独立进行。界面中 active 表示监听成功，不表示后端应用健康。
 
@@ -61,7 +65,7 @@ UI 当前只实现概览、端口表格、JSON 配置和最近日志，后续视
 .\wslpp.exe ui
 .\wslpp.exe stop
 .\wslpp.exe restart
-.\wslpp.exe uninstall               # 保留配置、token、日志
+.\wslpp.exe uninstall               # 保留配置、日志
 ```
 
 安装时在提升后的控制台输入 Windows 账户密码（不是 Hello PIN）；密码不写入参数、配置或日志。显式账户可使用 `install --account 'COMPUTER\user'`。本地/Microsoft/域账户兼容性、profile 与 Session 0 可见性均须实测；密码或域策略变更后需要更新 SCM 登录凭据。
@@ -77,6 +81,7 @@ UI 当前只实现概览、端口表格、JSON 配置和最近日志，后续视
 ```json
 {
   "schemaVersion": 1,
+  "distro": "Ubuntu",
   "onlyPredefined": true,
   "listenAddress": "0.0.0.0",
   "predefined": { "tcp": ["666:22"], "udp": ["5353:53"] },
@@ -91,6 +96,7 @@ UI 当前只实现概览、端口表格、JSON 配置和最近日志，后续视
 }
 ```
 
+- `distro`：要转发的 WSL2 发行版名称（不区分大小写）；省略时跟随 WSL 默认发行版。名称不存在时报告错误并列出已安装发行版。
 - `666:22`：Windows 666 → WSL 22；TCP/UDP 同数字端口可独立使用。显式映射优先于自动扫描的同号端口。
 - `onlyPredefined`：只转发定义且已在 WSL 被发现的端口；默认 false。
 - `ignore`：按 WSL 远端端口忽略，优先于显式映射。

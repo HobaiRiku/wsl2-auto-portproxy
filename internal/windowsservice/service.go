@@ -18,14 +18,12 @@ type Deployment struct {
 	Account    string `json:"account"`
 	OwnerSID   string `json:"ownerSID"`
 	Executable string `json:"executable"`
-	LegacyNAT  bool   `json:"legacyNAT"`
 }
 type InstallOptions struct {
 	Account      string
 	OwnerSID     string
 	ImportConfig string
 	Listen       string
-	LegacyNAT    bool
 }
 type program struct {
 	options app.Options

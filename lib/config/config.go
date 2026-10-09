@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type Config struct {
 	SchemaVersion  int             `json:"schemaVersion,omitempty"`
+	Distro         string          `json:"distro,omitempty"`
 	OnlyPredefined bool            `json:"onlyPredefined"`
 	Predefined     PredefinedPorts `json:"predefined"`
 	Ignore         IgnorePorts     `json:"ignore"`
@@ -215,6 +217,9 @@ func Parse(data []byte) (Config, error) {
 func (c Config) Validate() error {
 	if c.SchemaVersion != 0 && c.SchemaVersion != 1 {
 		return fmt.Errorf("unsupported schemaVersion %d", c.SchemaVersion)
+	}
+	if strings.TrimSpace(c.Distro) != c.Distro || strings.IndexFunc(c.Distro, unicode.IsControl) >= 0 {
+		return fmt.Errorf("distro must be a WSL distribution name")
 	}
 	if c.ListenAddress != "" && net.ParseIP(c.ListenAddress) == nil {
 		return fmt.Errorf("listenAddress must be an IP address")

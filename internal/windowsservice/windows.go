@@ -65,9 +65,6 @@ func OpenBrowser(url string) error {
 }
 func serviceConfig(d Deployment, password string) *kservice.Config {
 	args := []string{"run", "--home", d.Home, "--listen", d.Listen}
-	if d.LegacyNAT {
-		args = append(args, "--legacy-nat")
-	}
 	return &kservice.Config{Name: Name, DisplayName: "WSL Port Proxy", Description: "Windows to WSL TCP/UDP forwarding", Executable: d.Executable, Arguments: args, UserName: d.Account, WorkingDirectory: d.Home, Option: kservice.KeyValue{"Password": password, "DelayedAutoStart": true, "OnFailure": "restart", "OnFailureDelayDuration": "5s", "OnFailureResetPeriod": 86400}}
 }
 func loadDeployment() (Deployment, error) {
@@ -206,7 +203,7 @@ func Install(o InstallOptions) (result error) {
 	if err := atomicfile.Write(dest, data, 0700); err != nil {
 		return err
 	}
-	d := Deployment{Home: home, Listen: o.Listen, Account: o.Account, OwnerSID: o.OwnerSID, Executable: dest, LegacyNAT: o.LegacyNAT}
+	d := Deployment{Home: home, Listen: o.Listen, Account: o.Account, OwnerSID: o.OwnerSID, Executable: dest}
 	installAttempted := false
 	success := false
 	defer func() {

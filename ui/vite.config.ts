@@ -6,8 +6,8 @@ export default defineConfig({
   plugins: [vue(), VitePWA({
     registerType: 'prompt',
     manifest: {
-      name: 'wslpp — WSL 端口代理', short_name: 'wslpp',
-      description: '查看和管理 Windows 到 WSL 的 TCP/UDP 端口转发',
+      name: 'wslpp — WSL Port Proxy', short_name: 'wslpp',
+      description: 'View and manage TCP/UDP port forwarding from Windows to WSL',
       display: 'standalone', start_url: '/', theme_color: '#176b54', background_color: '#f5f6f8',
       icons: [
         { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },

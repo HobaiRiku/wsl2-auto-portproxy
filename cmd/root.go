@@ -21,6 +21,7 @@ import (
 
 	"github.com/HobaiRiku/wsl2-auto-portproxy/internal/app"
 	"github.com/HobaiRiku/wsl2-auto-portproxy/internal/paths"
+	buildinfo "github.com/HobaiRiku/wsl2-auto-portproxy/internal/version"
 	"github.com/HobaiRiku/wsl2-auto-portproxy/internal/windowsservice"
 	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/config"
 	"github.com/HobaiRiku/wsl2-auto-portproxy/lib/service"
@@ -30,7 +31,6 @@ import (
 type options struct {
 	home    string
 	listen  string
-	legacy  bool
 	devUI   bool
 	version string
 }
@@ -41,11 +41,10 @@ func Execute(version string) error {
 	root := &cobra.Command{Use: "wslpp", Short: "Windows to WSL TCP/UDP port proxy", SilenceUsage: true, SilenceErrors: true, Args: cobra.NoArgs}
 	root.PersistentFlags().StringVar(&o.home, "home", "", "data root (or WSLPP_HOME)")
 	root.PersistentFlags().StringVar(&o.listen, "listen", "127.0.0.1:47831", "loopback management address")
-	root.PersistentFlags().BoolVar(&o.legacy, "legacy-nat", false, "explicitly use NAT for older WSL without wslinfo")
 	root.PersistentFlags().BoolVar(&o.devUI, "ui-dev", false, "allow the loopback Vite development origin")
 	root.Flags().BoolVarP(&showVersion, "version", "v", false, "print version")
 	run := func() error {
-		options := app.Options{Home: o.home, Listen: o.listen, Version: version, LegacyNAT: o.legacy, DevUI: o.devUI}
+		options := app.Options{Home: o.home, Listen: o.listen, Version: version, DevUI: o.devUI}
 		if !windowsservice.Interactive() {
 			return windowsservice.Run(options)
 		}
@@ -61,7 +60,7 @@ func Execute(version string) error {
 		return run()
 	}
 	root.AddCommand(&cobra.Command{Use: "run", Short: "Run in the foreground", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error { return run() }})
-	root.AddCommand(&cobra.Command{Use: "version", Args: cobra.NoArgs, Run: func(cmd *cobra.Command, args []string) { fmt.Fprintln(cmd.OutOrStdout(), version) }})
+	root.AddCommand(&cobra.Command{Use: "version", Args: cobra.NoArgs, Run: func(cmd *cobra.Command, args []string) { fmt.Fprintln(cmd.OutOrStdout(), buildinfo.String()) }})
 	root.AddCommand(&cobra.Command{Use: "status", Short: "Read live service and proxy status", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := connect(o.home)
 		if err != nil {
@@ -73,22 +72,15 @@ func Execute(version string) error {
 		}
 		return printJSON(cmd.OutOrStdout(), body)
 	}})
-	root.AddCommand(&cobra.Command{Use: "ui", Short: "Open an authorized local web UI", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	root.AddCommand(&cobra.Command{Use: "ui", Short: "Open the local web UI", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := connect(o.home)
 		if err != nil {
 			return err
 		}
-		var body struct {
-			Code string `json:"code"`
-		}
-		if err := c.request("POST", "/session", map[string]bool{}, &body); err != nil {
-			return err
-		}
-		address := c.endpoint
+		link := c.endpoint + "/"
 		if o.devUI {
-			address = "http://127.0.0.1:5173"
+			link = "http://127.0.0.1:5173/"
 		}
-		link := address + "/#connect=" + url.QueryEscape(body.Code)
 		fmt.Fprintln(cmd.OutOrStdout(), link)
 		return windowsservice.OpenBrowser(link)
 	}})
@@ -149,23 +141,40 @@ func Execute(version string) error {
 		return printJSON(cmd.OutOrStdout(), saved)
 	}})
 	root.AddCommand(configCmd)
-	root.AddCommand(&cobra.Command{Use: "doctor", Short: "Check the current Windows account and WSL visibility", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	var doctorDistro string
+	doctor := &cobra.Command{Use: "doctor", Short: "Check the current Windows account and WSL visibility", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		current, err := user.Current()
 		if err != nil {
 			return err
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		state, scanErr := (service.Scanner{LegacyNAT: o.legacy}).Scan(ctx)
+		scanner := service.Scanner{}
+		distros, listErr := scanner.Distros(ctx)
+		state, scanErr := scanner.Scan(ctx, doctorDistro)
 		if scanErr != nil {
 			state.Error = scanErr.Error()
+		} else if listErr != nil {
+			state.Error = listErr.Error()
 		}
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
+		ports := make([]string, 0, len(state.Ports))
+		for _, p := range state.Ports {
+			ports = append(ports, fmt.Sprintf("%s/%d", p.Type, p.Port))
+		}
+		body, err := json.Marshal(struct {
 			Account string           `json:"account"`
 			SID     string           `json:"sid"`
+			Distros []service.Distro `json:"distros"`
 			WSL     service.Snapshot `json:"wsl"`
-		}{current.Username, current.Uid, state})
-	}})
+			Ports   []string         `json:"ports"`
+		}{current.Username, current.Uid, distros, state, ports})
+		if err != nil {
+			return err
+		}
+		return printJSON(cmd.OutOrStdout(), body)
+	}}
+	doctor.Flags().StringVar(&doctorDistro, "distro", "", "WSL distribution to check (default: the WSL default distribution)")
+	root.AddCommand(doctor)
 	var account, ownerSID, importConfig string
 	install := &cobra.Command{Use: "install", Short: "Install the Windows SCM service as the WSL owner account", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		current, err := user.Current()
@@ -201,7 +210,7 @@ func Execute(version string) error {
 		if err != nil || launched {
 			return err
 		}
-		if err := windowsservice.Install(windowsservice.InstallOptions{Account: account, OwnerSID: ownerSID, ImportConfig: importConfig, Listen: o.listen, LegacyNAT: o.legacy}); err != nil {
+		if err := windowsservice.Install(windowsservice.InstallOptions{Account: account, OwnerSID: ownerSID, ImportConfig: importConfig, Listen: o.listen}); err != nil {
 			return err
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), "Installed. Run wslpp start, then verify wslpp status and wslpp doctor under the service account.")
@@ -226,7 +235,6 @@ func Execute(version string) error {
 
 type client struct {
 	endpoint string
-	token    string
 	http     *http.Client
 }
 
@@ -250,11 +258,7 @@ func connect(home string) (*client, error) {
 		if err := validateEndpoint(address); err != nil {
 			return nil, err
 		}
-		token, err := os.ReadFile(filepath.Join(candidate, "token"))
-		if err != nil {
-			return nil, err
-		}
-		c := &client{endpoint: address, token: strings.TrimSpace(string(token)), http: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+		c := &client{endpoint: address, http: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 		var health json.RawMessage
 		if err := c.request("GET", "/health", nil, &health); err == nil {
 			return c, nil
@@ -288,7 +292,6 @@ func (c *client) request(method, path string, body, out any) error {
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.http.Do(request)
 	if err != nil {

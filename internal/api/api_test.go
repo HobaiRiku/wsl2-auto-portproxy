@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -23,24 +22,18 @@ func testServer(t *testing.T) (*httptest.Server, *registry.Registry) {
 	c := controller.New(r, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 	server := httptest.NewUnstartedServer(nil)
 	port := server.Listener.Addr().(*net.TCPAddr).Port
-	server.Config.Handler = New(Options{Registry: r, Controller: c, Logs: &logbuffer.Buffer{}, Token: "test-token", Port: port, Web: http.NotFoundHandler()})
+	server.Config.Handler = New(Options{Registry: r, Controller: c, Logs: &logbuffer.Buffer{}, Port: port, Web: http.NotFoundHandler()})
 	server.Start()
 	t.Cleanup(server.Close)
 	return server, r
 }
-func request(t *testing.T, server *httptest.Server, method, path, body string, auth bool, cookie *http.Cookie) *http.Response {
+func request(t *testing.T, server *httptest.Server, method, path, body string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(method, server.URL+path, bytes.NewBufferString(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if auth {
-		req.Header.Set("Authorization", "Bearer test-token")
-	}
-	if cookie != nil {
-		req.AddCookie(cookie)
-	}
 	response, err := server.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -48,44 +41,29 @@ func request(t *testing.T, server *httptest.Server, method, path, body string, a
 	t.Cleanup(func() { response.Body.Close() })
 	return response
 }
-func TestAuthorizationLinkSingleUseAndCookie(t *testing.T) {
+func TestLoopbackNeedsNoLogin(t *testing.T) {
 	server, _ := testServer(t)
-	if response := request(t, server, "GET", "/api/status", "", false, nil); response.StatusCode != 401 {
-		t.Fatal(response.StatusCode)
+	for _, path := range []string{"/api/status", "/api/config", "/api/logs", "/api/distros"} {
+		if response := request(t, server, "GET", path, ""); response.StatusCode != 200 {
+			t.Fatalf("%s: %d", path, response.StatusCode)
+		}
 	}
-	ticket := request(t, server, "POST", "/api/session", "{}", true, nil)
-	var code struct{ Code string }
-	if err := json.NewDecoder(ticket.Body).Decode(&code); err != nil || code.Code == "" {
-		t.Fatalf("ticket: %v", err)
-	}
-	body, _ := json.Marshal(map[string]string{"code": code.Code})
-	connected := request(t, server, "POST", "/api/connect", string(body), false, nil)
-	if connected.StatusCode != 200 {
-		t.Fatal(connected.StatusCode)
-	}
-	cookies := connected.Cookies()
-	if len(cookies) != 1 || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
-		t.Fatal("invalid session cookie")
-	}
-	if response := request(t, server, "GET", "/api/status", "", false, cookies[0]); response.StatusCode != 200 {
-		t.Fatal(response.StatusCode)
-	}
-	if response := request(t, server, "POST", "/api/connect", string(body), false, nil); response.StatusCode != 401 {
-		t.Fatal("ticket replay accepted")
+	if response := request(t, server, "POST", "/api/session", "{}"); response.StatusCode != 404 && response.StatusCode != 405 {
+		t.Fatalf("session endpoint still served: %d", response.StatusCode)
 	}
 }
 func TestConfigValidationAndRevisionConflict(t *testing.T) {
 	server, r := testServer(t)
 	doc, _, _ := r.Snapshot()
 	bad := `{"revision":"` + doc.Revision + `","config":{"predefined":{"tcp":["22"]}}}`
-	if response := request(t, server, "PUT", "/api/config", bad, true, nil); response.StatusCode != 400 {
+	if response := request(t, server, "PUT", "/api/config", bad); response.StatusCode != 400 {
 		t.Fatal(response.StatusCode)
 	}
 	body := `{"revision":"` + doc.Revision + `","config":{"onlyPredefined":true}}`
-	if response := request(t, server, "PUT", "/api/config", body, true, nil); response.StatusCode != 200 {
+	if response := request(t, server, "PUT", "/api/config", body); response.StatusCode != 200 {
 		t.Fatal(response.StatusCode)
 	}
-	if response := request(t, server, "PUT", "/api/config", body, true, nil); response.StatusCode != 409 {
+	if response := request(t, server, "PUT", "/api/config", body); response.StatusCode != 409 {
 		t.Fatal("stale update accepted")
 	}
 	current, _, _ := r.Snapshot()
