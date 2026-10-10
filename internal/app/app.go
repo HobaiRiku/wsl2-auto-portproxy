@@ -72,7 +72,9 @@ func Run(ctx context.Context, o Options) error {
 	rotating := &lumberjack.Logger{Filename: filepath.Join(home, "wslpp.log"), MaxSize: 10, MaxBackups: 3, MaxAge: 7}
 	defer rotating.Close()
 	buffer := &logbuffer.Buffer{}
-	logger := slog.New(logbuffer.Handler{Buffer: buffer, Next: slog.NewJSONHandler(io.MultiWriter(os.Stderr, rotating), nil)})
+	// File first: a service has no usable stderr, and MultiWriter stops at the
+	// first writer that fails.
+	logger := slog.New(logbuffer.Handler{Buffer: buffer, Next: slog.NewJSONHandler(io.MultiWriter(rotating, os.Stderr), nil)})
 	r := registry.New(filepath.Join(home, "config.json"))
 	scanner := o.Scanner
 	var distros func(context.Context) ([]service.Distro, error)
