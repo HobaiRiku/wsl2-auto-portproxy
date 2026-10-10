@@ -34,6 +34,13 @@ function load(doc: ConfigDocument) {
   loaded.value = doc
   form.value = fromConfig(doc.config, t)
   text.value = JSON.stringify(doc.config, null, 2)
+  // Edit the rejected file itself; the form would only show the last valid
+  // config, and saving it would discard what the user wrote.
+  if (doc.rejected) {
+    mode.value = 'json'
+    text.value = doc.rejected.text
+    errors.value = [t('config.rejected', { error: doc.rejected.error })]
+  }
 }
 async function reload() {
   errors.value = []

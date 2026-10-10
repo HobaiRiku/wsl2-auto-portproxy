@@ -109,3 +109,28 @@ func TestBackupPreservedAndDeletedFileRepair(t *testing.T) {
 		t.Fatalf("migration backup changed: %v", err)
 	}
 }
+func TestRejectedTextIsKeptForRepair(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(path, []byte(`{"onlyPredefined":`), 0600)
+	r := New(path)
+	if text, problem := r.Rejected(); string(text) != `{"onlyPredefined":` || problem == "" {
+		t.Fatalf("initial invalid file: %q %q", text, problem)
+	}
+	doc, _, _ := r.Snapshot()
+	if _, err := r.Replace(doc.Revision, []byte(`{"onlyPredefined":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if text, _ := r.Rejected(); text != nil {
+		t.Fatal("repair kept rejected text")
+	}
+	os.WriteFile(path, nil, 0600)
+	r.Reload()
+	if text, problem := r.Rejected(); text == nil || problem == "" {
+		t.Fatal("empty file not reported as rejected")
+	}
+	os.WriteFile(path, []byte(`{}`), 0600)
+	r.Reload()
+	if text, _ := r.Rejected(); text != nil {
+		t.Fatal("valid external edit kept rejected text")
+	}
+}

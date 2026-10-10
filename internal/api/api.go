@@ -72,7 +72,23 @@ func New(o Options) http.Handler {
 			Started time.Time `json:"startedAt"`
 		}{status, o.Version, o.Started})
 	})
-	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) { doc, _, _ := o.Registry.Snapshot(); reply(w, 200, doc) })
+	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
+		type rejected struct {
+			Text  string `json:"text"`
+			Error string `json:"error"`
+		}
+		// When the file on disk is invalid, include its text so the editor
+		// repairs it rather than overwriting it with the last valid config.
+		var response struct {
+			registry.Document
+			Rejected *rejected `json:"rejected,omitempty"`
+		}
+		response.Document, _, _ = o.Registry.Snapshot()
+		if text, problem := o.Registry.Rejected(); text != nil {
+			response.Rejected = &rejected{string(text), problem}
+		}
+		reply(w, 200, response)
+	})
 	mux.HandleFunc("PUT /api/config", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Revision string          `json:"revision"`

@@ -26,7 +26,12 @@ export interface Status {
   discovered: Discovered[]
   proxies: ProxyStatus[]
 }
-export interface ConfigDocument { revision: string; config: Record<string, unknown> }
+export interface ConfigDocument {
+  revision: string
+  config: Record<string, unknown>
+  // Present when the file on disk failed validation; config is then the last valid one.
+  rejected?: { text: string; error: string }
+}
 export interface Distro { name: string; default: boolean; version: string }
 export interface LogEntry { time: string; level: string; message: string }
 

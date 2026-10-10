@@ -29,7 +29,10 @@ type Registry struct {
 	ready   bool
 	hadFile bool
 	problem string
-	wake    chan struct{}
+	// rejected is the on-disk text that failed validation, so an editor can
+	// repair it instead of replacing it with the last valid config.
+	rejected []byte
+	wake     chan struct{}
 }
 
 func New(path string) *Registry {
@@ -67,6 +70,7 @@ func (r *Registry) reload(initial bool) {
 			r.disk = nil
 		}
 		r.problem = err.Error()
+		r.rejected = nil
 		return
 	}
 	if r.hadFile && bytes.Equal(data, r.disk) {
@@ -77,11 +81,13 @@ func (r *Registry) reload(initial bool) {
 	c, err := config.Parse(data)
 	if err != nil {
 		r.problem = err.Error()
+		r.rejected = append([]byte{}, data...)
 		return
 	}
 	r.data = canonical(c)
 	r.ready = true
 	r.problem = ""
+	r.rejected = nil
 	r.signal()
 }
 func (r *Registry) Reload() { r.reload(false) }
@@ -93,6 +99,17 @@ func (r *Registry) Snapshot() (Document, bool, string) {
 		c, _ = config.Parse(r.data)
 	}
 	return Document{Revision: revision(r.data), Config: c}, r.ready, r.problem
+}
+
+// Rejected returns the config file text that failed validation and why, or
+// nil once the file is valid again.
+func (r *Registry) Rejected() ([]byte, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rejected == nil {
+		return nil, ""
+	}
+	return append([]byte{}, r.rejected...), r.problem
 }
 func (r *Registry) Replace(expected string, data []byte) (Document, error) {
 	c, err := config.Parse(data)
@@ -132,6 +149,7 @@ func (r *Registry) Replace(expected string, data []byte) (Document, error) {
 	r.ready = true
 	r.hadFile = true
 	r.problem = ""
+	r.rejected = nil
 	r.signal()
 	return Document{Revision: revision(encoded), Config: c}, nil
 }

@@ -62,7 +62,7 @@ func Execute(version string) error {
 	root.AddCommand(&cobra.Command{Use: "run", Short: "Run in the foreground", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error { return run() }})
 	root.AddCommand(&cobra.Command{Use: "version", Args: cobra.NoArgs, Run: func(cmd *cobra.Command, args []string) { fmt.Fprintln(cmd.OutOrStdout(), buildinfo.String()) }})
 	root.AddCommand(&cobra.Command{Use: "status", Short: "Read live service and proxy status", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := connect(o.home)
+		c, err := o.connect(cmd)
 		if err != nil {
 			return err
 		}
@@ -73,7 +73,7 @@ func Execute(version string) error {
 		return printJSON(cmd.OutOrStdout(), body)
 	}})
 	root.AddCommand(&cobra.Command{Use: "ui", Short: "Open the local web UI", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := connect(o.home)
+		c, err := o.connect(cmd)
 		if err != nil {
 			return err
 		}
@@ -86,20 +86,26 @@ func Execute(version string) error {
 	}})
 	configCmd := &cobra.Command{Use: "config", Short: "Manage config through the running service"}
 	configCmd.AddCommand(&cobra.Command{Use: "get", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := connect(o.home)
+		c, err := o.connect(cmd)
 		if err != nil {
 			return err
 		}
 		var doc struct {
-			Config json.RawMessage `json:"config"`
+			Config   json.RawMessage `json:"config"`
+			Rejected *struct {
+				Error string `json:"error"`
+			} `json:"rejected"`
 		}
 		if err := c.request("GET", "/config", nil, &doc); err != nil {
 			return err
 		}
+		if doc.Rejected != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: the config file is invalid and was not applied: %s\n", doc.Rejected.Error)
+		}
 		return printJSON(cmd.OutOrStdout(), doc.Config)
 	}})
 	configCmd.AddCommand(&cobra.Command{Use: "set <file|->", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := connect(o.home)
+		c, err := o.connect(cmd)
 		if err != nil {
 			return err
 		}
@@ -238,6 +244,29 @@ type client struct {
 	http     *http.Client
 }
 
+// connect finds the running instance through the endpoint file in its data
+// root, or uses --listen directly when it was given.
+func (o *options) connect(cmd *cobra.Command) (*client, error) {
+	if cmd.Flags().Changed("listen") {
+		c, err := dial("http://" + o.listen)
+		if err != nil {
+			return nil, fmt.Errorf("no reachable wslpp at %s: %w", o.listen, err)
+		}
+		return c, nil
+	}
+	return connect(o.home)
+}
+func dial(address string) (*client, error) {
+	if err := validateEndpoint(address); err != nil {
+		return nil, err
+	}
+	c := &client{endpoint: address, http: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	var health json.RawMessage
+	if err := c.request("GET", "/health", nil, &health); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
 func connect(home string) (*client, error) {
 	resolved, err := paths.Resolve(home)
 	if err != nil {
@@ -258,9 +287,7 @@ func connect(home string) (*client, error) {
 		if err := validateEndpoint(address); err != nil {
 			return nil, err
 		}
-		c := &client{endpoint: address, http: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
-		var health json.RawMessage
-		if err := c.request("GET", "/health", nil, &health); err == nil {
+		if c, err := dial(address); err == nil {
 			return c, nil
 		}
 	}
