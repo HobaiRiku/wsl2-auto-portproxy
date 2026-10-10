@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"bytes"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -106,5 +108,50 @@ func TestLoopbackClientBypassesAllowlist(t *testing.T) {
 	buf := make([]byte, 2)
 	if _, err := conn.Read(buf); err != nil || string(buf) != "ok" {
 		t.Fatalf("loopback client should pass the allowlist, got %q, %v", buf, err)
+	}
+}
+
+func TestHalfCloseDeliversFullResponse(t *testing.T) {
+	request := []byte("request payload")
+	// several socket buffers worth, so the proxy keeps relaying long after the client half-closed
+	response := bytes.Repeat([]byte("0123456789abcdef"), 1<<16)
+
+	backend, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Close()
+	received := make(chan []byte, 1)
+	go func() {
+		c, err := backend.Accept()
+		if err != nil {
+			received <- nil
+			return
+		}
+		defer c.Close()
+		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+		// read until the client's FIN is forwarded, then answer
+		req, _ := io.ReadAll(c)
+		received <- req
+		_, _ = c.Write(response)
+	}()
+	conn := dialProxy(t, localProxy(t, backend))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Write(request); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if req := <-received; !bytes.Equal(req, request) {
+		t.Fatalf("backend got request %q, want %q", req, request)
+	}
+	if !bytes.Equal(got, response) {
+		t.Fatalf("got %d response bytes, want %d", len(got), len(response))
 	}
 }
