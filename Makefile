@@ -13,7 +13,8 @@
 # ProgramW6432 is the 64-bit Program Files even when make.exe is 32-bit.
 
 ifeq ($(OS),Windows_NT)
-ifeq ($(shell where sh 2>NUL),)
+# 2>&1 rather than 2>NUL: under an sh-based make, NUL is a regular file name.
+ifeq ($(findstring sh.exe,$(shell where sh.exe 2>&1)),)
 GIT_USR_BIN := $(subst \,/,$(or $(ProgramW6432),$(ProgramFiles)))/Git/usr/bin
 export PATH := $(GIT_USR_BIN);$(PATH)
 SHELL := sh.exe
