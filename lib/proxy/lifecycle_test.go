@@ -113,3 +113,24 @@ func TestStopBeforeStart(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+func TestStartFailsWhenWildcardPortIsTaken(t *testing.T) {
+	tcp, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcp.Close()
+	udp, err := net.ListenPacket("udp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udp.Close()
+	for _, p := range []*Proxy{
+		{Type: "tcp", Port: 1, ProxyPort: int64(tcp.Addr().(*net.TCPAddr).Port), WslIp: "127.0.0.1"},
+		{Type: "udp", Port: 1, ProxyPort: int64(udp.LocalAddr().(*net.UDPAddr).Port), WslIp: "127.0.0.1"},
+	} {
+		if err := p.Start(); err == nil {
+			p.Stop()
+			t.Fatalf("%s proxy started on a port another listener owns", p.Type)
+		}
+	}
+}

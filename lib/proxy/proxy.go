@@ -136,20 +136,27 @@ func (p *Proxy) StartContext(parent context.Context) error {
 		r.timeout = 5 * time.Second
 	}
 	address := net.JoinHostPort(host, strconv.FormatInt(p.ProxyPort, 10))
+	// An IPv4 host must not open a dual-stack [::] socket: on Windows that
+	// bind succeeds beside another program's 0.0.0.0 listener and silently
+	// loses its traffic instead of reporting the port as blocked.
+	network := p.Type
+	if ip := net.ParseIP(host); ip != nil && ip.To4() != nil {
+		network += "4"
+	}
 	if p.Type == "tcp" {
-		ln, err := net.Listen("tcp", address)
+		ln, err := net.Listen(network, address)
 		if err != nil {
 			cancel()
 			return err
 		}
 		r.listener = ln
 	} else {
-		addr, err := net.ResolveUDPAddr("udp", address)
+		addr, err := net.ResolveUDPAddr(network, address)
 		if err != nil {
 			cancel()
 			return err
 		}
-		conn, err := net.ListenUDP("udp", addr)
+		conn, err := net.ListenUDP(network, addr)
 		if err != nil {
 			cancel()
 			return err
