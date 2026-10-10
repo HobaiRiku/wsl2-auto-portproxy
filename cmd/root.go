@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -32,6 +33,7 @@ type options struct {
 	home    string
 	listen  string
 	devUI   bool
+	pause   bool
 	version string
 }
 
@@ -42,6 +44,8 @@ func Execute(version string) error {
 	root.PersistentFlags().StringVar(&o.home, "home", "", "data root (or WSLPP_HOME)")
 	root.PersistentFlags().StringVar(&o.listen, "listen", "127.0.0.1:47831", "loopback management address")
 	root.PersistentFlags().BoolVar(&o.devUI, "ui-dev", false, "allow the loopback Vite development origin")
+	root.PersistentFlags().BoolVar(&o.pause, "pause-on-exit", false, "wait for Enter before exiting (set for elevated windows)")
+	root.PersistentFlags().MarkHidden("pause-on-exit")
 	root.Flags().BoolVarP(&showVersion, "version", "v", false, "print version")
 	run := func() error {
 		options := app.Options{Home: o.home, Listen: o.listen, Version: version, DevUI: o.devUI}
@@ -236,7 +240,17 @@ func Execute(version string) error {
 			return windowsservice.Control(cmd.Name())
 		}})
 	}
-	return root.Execute()
+	err := root.Execute()
+	if o.pause {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "\nFailed:", err)
+		} else {
+			fmt.Fprintln(os.Stderr, "\nDone.")
+		}
+		fmt.Fprint(os.Stderr, "Press Enter to close this window.")
+		bufio.NewReader(os.Stdin).ReadString('\n')
+	}
+	return err
 }
 
 type client struct {

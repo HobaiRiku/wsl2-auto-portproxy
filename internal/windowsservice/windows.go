@@ -43,6 +43,8 @@ func Elevate(args []string) (bool, error) {
 	}
 	verb, _ := windows.UTF16PtrFromString("runas")
 	file, _ := windows.UTF16PtrFromString(exe)
+	// The elevated console closes on exit; keep it open so its result is seen.
+	args = append(args[:len(args):len(args)], "--pause-on-exit")
 	escaped := make([]string, len(args))
 	for i, arg := range args {
 		escaped[i] = syscall.EscapeArg(arg)
@@ -128,13 +130,24 @@ func Install(o InstallOptions) (result error) {
 	if strings.Contains(strings.ToLower(exe), "go-build") {
 		return errors.New("install from a stable release binary, not go run")
 	}
-	// Capture the password in this elevated console, never in process arguments.
-	password, err := readPassword()
-	if err != nil {
-		return err
-	}
 	if err := grantServiceLogon(o.OwnerSID); err != nil {
 		return err
+	}
+	// Capture the password in this elevated console, never in process arguments.
+	var password string
+	for attempt := 1; ; attempt++ {
+		if password, err = readPassword(); err != nil {
+			return err
+		}
+		err = verifyLogon(o.Account, password)
+		if err == nil {
+			break
+		}
+		password = ""
+		if !errors.Is(err, errBadPassword) || attempt == 3 {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "Incorrect password, try again.")
 	}
 	if err := os.MkdirAll(root(), 0700); err != nil {
 		return err

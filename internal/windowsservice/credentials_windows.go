@@ -3,9 +3,11 @@
 package windowsservice
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -14,7 +16,7 @@ import (
 )
 
 func readPassword() (string, error) {
-	fmt.Fprint(os.Stderr, "Windows service account password (not Windows Hello PIN): ")
+	fmt.Fprint(os.Stderr, "Windows account password (for a Microsoft account, its online password; a PIN does not work): ")
 	data, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Fprintln(os.Stderr)
 	if err != nil {
@@ -72,4 +74,45 @@ func grantServiceLogon(owner string) error {
 	runtime.KeepAlive(sid)
 	runtime.KeepAlive(name)
 	return check(status)
+}
+
+var errBadPassword = errors.New("incorrect password")
+
+// verifyLogon checks the password the way SCM will use it, so a PIN or a typo
+// fails here instead of at the first service start. Needs SeServiceLogonRight.
+func verifyLogon(account, password string) error {
+	domain, name := ".", account
+	if i := strings.LastIndex(account, `\`); i >= 0 {
+		domain, name = account[:i], account[i+1:]
+	}
+	u, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return err
+	}
+	d, err := windows.UTF16PtrFromString(domain)
+	if err != nil {
+		return err
+	}
+	pw, err := windows.UTF16FromString(password)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		for i := range pw {
+			pw[i] = 0
+		}
+	}()
+	const logonService, providerDefault = 5, 0
+	var token windows.Token
+	ok, _, callErr := windows.NewLazySystemDLL("advapi32.dll").NewProc("LogonUserW").Call(
+		uintptr(unsafe.Pointer(u)), uintptr(unsafe.Pointer(d)), uintptr(unsafe.Pointer(&pw[0])),
+		logonService, providerDefault, uintptr(unsafe.Pointer(&token)))
+	runtime.KeepAlive(pw)
+	if ok == 0 {
+		if errors.Is(callErr, windows.ERROR_LOGON_FAILURE) {
+			return errBadPassword
+		}
+		return fmt.Errorf("verify service logon: %w", callErr)
+	}
+	return token.Close()
 }
