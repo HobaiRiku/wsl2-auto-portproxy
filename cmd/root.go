@@ -186,7 +186,8 @@ func Execute(version string) error {
 	doctor.Flags().StringVar(&doctorDistro, "distro", "", "WSL distribution to check (default: the WSL default distribution)")
 	root.AddCommand(doctor)
 	var account, ownerSID, importConfig string
-	install := &cobra.Command{Use: "install", Short: "Install the Windows SCM service as the WSL owner account", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	var asService bool
+	install := &cobra.Command{Use: "install", Short: "Run wslpp in the background from boot as the WSL owner account", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		current, err := user.Current()
 		if err != nil {
 			return err
@@ -220,19 +221,24 @@ func Execute(version string) error {
 		if err != nil || launched {
 			return err
 		}
-		if err := windowsservice.Install(windowsservice.InstallOptions{Account: account, OwnerSID: ownerSID, ImportConfig: importConfig, Listen: o.listen}); err != nil {
+		if err := windowsservice.Install(windowsservice.InstallOptions{Account: account, OwnerSID: ownerSID, ImportConfig: importConfig, Listen: o.listen, Service: asService}); err != nil {
 			return err
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), "Installed. Run wslpp start, then verify wslpp status and wslpp doctor under the service account.")
+		if asService {
+			fmt.Fprintln(cmd.OutOrStdout(), "Installed. Run wslpp start, then verify wslpp status and wslpp doctor under the service account.")
+		} else {
+			fmt.Fprintf(cmd.OutOrStdout(), "Installed and running as %s; it starts with Windows. Web interface: http://%s/\n", account, o.listen)
+		}
 		return nil
 	}}
 	install.Flags().StringVar(&account, "account", "", "Windows account that owns the WSL distribution")
 	install.Flags().StringVar(&ownerSID, "owner-sid", "", "expected Windows owner SID (preserved across UAC)")
 	install.Flags().MarkHidden("owner-sid")
 	install.Flags().StringVar(&importConfig, "import-config", "", "import an existing config if the service has none")
+	install.Flags().BoolVar(&asService, "service", false, "install a Windows service instead of a scheduled task (asks for the account password)")
 	root.AddCommand(install)
 	for _, action := range []string{"start", "stop", "restart", "uninstall", "update"} {
-		root.AddCommand(&cobra.Command{Use: action, Short: action + " the Windows SCM service", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		root.AddCommand(&cobra.Command{Use: action, Short: action + " the installed background wslpp", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 			launched, err := windowsservice.Elevate(os.Args[1:])
 			if err != nil || launched {
 				return err

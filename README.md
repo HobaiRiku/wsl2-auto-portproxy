@@ -11,7 +11,7 @@ wsl2-auto-portProxy(wslpp) is a simple tool for proxying port of linux running i
 - [x] client IP allowlist per port
 - [x] web interface (English / 中文 / 日本語)
 - [x] UDP port support (opt-in)
-- [x] run as a Windows service
+- [x] start with Windows in the background (no password needed)
 
 
 ## Requirement
@@ -32,18 +32,22 @@ Download `wslpp_<version>_windows_amd64.zip` (or `arm64`) from [release](https:/
 ```
 Then open the web interface at http://127.0.0.1:47831/ (or run `.\wslpp.exe ui`). It only listens on 127.0.0.1, so no login is needed.
 
-#### Run as a Windows service
+#### Start with Windows
 To keep wslpp running in the background and start it with Windows:
 ```powershell
-.\wslpp.exe install    # asks for UAC, then your Windows account password (not the PIN)
-.\wslpp.exe start
+.\wslpp.exe install    # asks for UAC once; no password
 .\wslpp.exe status
-.\wslpp.exe stop
+.\wslpp.exe stop       # stays stopped, also after a reboot, until start
+.\wslpp.exe start
 .\wslpp.exe uninstall  # keeps config and logs
 ```
-The service runs as your Windows account, because WSL distributions belong to the user who installed them. It copies itself to `%ProgramData%\wslpp\bin` and keeps its data in `%ProgramData%\wslpp\data`. To upgrade, run `.\wslpp.exe update` from the new version.
+`install` registers a scheduled task that runs wslpp as your Windows account from boot, without a window and without storing your password. It runs as you because WSL distributions belong to the user who installed them. If wslpp exits, the task starts it again within 5 minutes. It also adds a Windows Firewall rule so other devices can reach the forwarded ports.
 
-**Note: service mode is new; please report issues if it does not start or cannot see your distribution.**
+wslpp copies itself to `%ProgramData%\wslpp\bin` and keeps its data in `%ProgramData%\wslpp\data`. To upgrade, run `.\wslpp.exe update` from the new version.
+
+`.\wslpp.exe install --service` installs a Windows service instead. A service must store your account password: for a Microsoft account that is its online password, a Windows Hello PIN does not work.
+
+**Note: background mode is new; please report issues if it does not start or cannot see your distribution.**
 
 #### or build wslpp.exe from source
 Requires Go, Node.js 22+ (with corepack) and GNU make:
@@ -58,7 +62,7 @@ wslpp start an interval (every 2 seconds) to get IP address of the nat interface
 When wsl is not running, wslpp stops all proxies and waits, it only checks the state by `wsl --list` and won't boot wsl again by itself.
 
 ## Configuration
-Support custom configuration by a json file, placed in `%HOMEPATH%/.wslpp/config.json` (`%ProgramData%\wslpp\data\config.json` for the service). It can also be edited in the web interface, with a form or as JSON.    
+Support custom configuration by a json file, placed in `%HOMEPATH%/.wslpp/config.json` (`%ProgramData%\wslpp\data\config.json` once installed). It can also be edited in the web interface, with a form or as JSON.    
 Example:
 ```json
 {

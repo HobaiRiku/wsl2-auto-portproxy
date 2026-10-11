@@ -18,12 +18,17 @@ type Deployment struct {
 	Account    string `json:"account"`
 	OwnerSID   string `json:"ownerSID"`
 	Executable string `json:"executable"`
+	// Mode is "task" or "service"; deployments without it predate tasks.
+	Mode string `json:"mode,omitempty"`
 }
 type InstallOptions struct {
 	Account      string
 	OwnerSID     string
 	ImportConfig string
 	Listen       string
+	// Service installs an SCM service, which needs the account password,
+	// instead of the default scheduled task.
+	Service bool
 }
 type program struct {
 	options app.Options

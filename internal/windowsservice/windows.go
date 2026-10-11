@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -123,6 +122,9 @@ func Install(o InstallOptions) (result error) {
 	} else if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		return err
 	}
+	if taskExists() {
+		return errors.New("wslpp already installed as a scheduled task; use update to replace its binary")
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -130,24 +132,11 @@ func Install(o InstallOptions) (result error) {
 	if strings.Contains(strings.ToLower(exe), "go-build") {
 		return errors.New("install from a stable release binary, not go run")
 	}
-	if err := grantServiceLogon(o.OwnerSID); err != nil {
-		return err
-	}
-	// Capture the password in this elevated console, never in process arguments.
 	var password string
-	for attempt := 1; ; attempt++ {
-		if password, err = readPassword(); err != nil {
+	if o.Service {
+		if password, err = servicePassword(o); err != nil {
 			return err
 		}
-		err = verifyLogon(o.Account, password)
-		if err == nil {
-			break
-		}
-		password = ""
-		if !errors.Is(err, errBadPassword) || attempt == 3 {
-			return err
-		}
-		fmt.Fprintln(os.Stderr, "Incorrect password, try again.")
 	}
 	if err := os.MkdirAll(root(), 0700); err != nil {
 		return err
@@ -162,6 +151,13 @@ func Install(o InstallOptions) (result error) {
 		return errors.New("wslpp was installed concurrently")
 	} else if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		return err
+	}
+	if taskExists() {
+		return errors.New("wslpp was installed concurrently")
+	}
+	// Otherwise the post-install health check would pass against it.
+	if healthy(o.Listen, 0) == nil {
+		return fmt.Errorf("another wslpp already answers on %s; stop it before installing", o.Listen)
 	}
 	if err := setAccess(root(), o.OwnerSID, "GRGX"); err != nil {
 		return err
@@ -216,14 +212,24 @@ func Install(o InstallOptions) (result error) {
 	if err := atomicfile.Write(dest, data, 0700); err != nil {
 		return err
 	}
-	d := Deployment{Home: home, Listen: o.Listen, Account: o.Account, OwnerSID: o.OwnerSID, Executable: dest}
+	d := Deployment{Home: home, Listen: o.Listen, Account: o.Account, OwnerSID: o.OwnerSID, Executable: dest, Mode: modeTask}
+	if o.Service {
+		d.Mode = modeService
+	}
 	installAttempted := false
 	success := false
 	defer func() {
 		if success {
 			return
 		}
-		if installAttempted {
+		removeFirewallRule(dest)
+		if installAttempted && d.Mode == modeTask {
+			stopTask(d)
+			if err := schtasks("/Delete", "/TN", Name, "/F"); err != nil && taskExists() {
+				result = errors.Join(result, fmt.Errorf("installation rollback: %w", err))
+				return
+			}
+		} else if installAttempted {
 			existing, err := m.OpenService(Name)
 			if err == nil {
 				existing.Close()
@@ -248,6 +254,20 @@ func Install(o InstallOptions) (result error) {
 	if err := atomicfile.Write(metadata, encoded, 0600); err != nil {
 		return err
 	}
+	if err := addFirewallRule(dest); err != nil {
+		return err
+	}
+	if d.Mode == modeTask {
+		installAttempted = true
+		if err := registerTask(d); err != nil {
+			return err
+		}
+		if err := startTask(d); err != nil {
+			return err
+		}
+		success = true
+		return nil
+	}
 	service, err := kservice.New(&program{}, serviceConfig(d, password))
 	password = ""
 	if err != nil {
@@ -259,6 +279,29 @@ func Install(o InstallOptions) (result error) {
 	}
 	success = true
 	return nil
+}
+
+// servicePassword grants the logon right and reads the account password,
+// checking it the way SCM will so a PIN or a typo fails here.
+func servicePassword(o InstallOptions) (string, error) {
+	if err := grantServiceLogon(o.OwnerSID); err != nil {
+		return "", err
+	}
+	// Capture the password in this elevated console, never in process arguments.
+	for attempt := 1; ; attempt++ {
+		password, err := readPassword()
+		if err != nil {
+			return "", err
+		}
+		err = verifyLogon(o.Account, password)
+		if err == nil {
+			return password, nil
+		}
+		if !errors.Is(err, errBadPassword) || attempt == 3 {
+			return "", err
+		}
+		fmt.Fprintln(os.Stderr, "Incorrect password, try again.")
+	}
 }
 func Control(action string) error {
 	d, err := loadDeployment()
@@ -273,6 +316,9 @@ func Control(action string) error {
 		return err
 	}
 	defer release()
+	if d.Mode == modeTask {
+		return controlTask(d, action)
+	}
 	m, err := mgr.Connect()
 	if err != nil {
 		return err
@@ -357,56 +403,82 @@ func Control(action string) error {
 		if err := service.Uninstall(); err != nil {
 			return err
 		}
+		removeFirewallRule(d.Executable)
 		if err := os.Remove(d.Executable); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		return os.Remove(filepath.Join(root(), "deployment.json"))
 	case "update":
-		exe, err := os.Executable()
-		if err != nil {
-			return err
-		}
-		if strings.EqualFold(exe, d.Executable) {
-			return errors.New("run update from the new release binary outside the installed bin directory")
-		}
-		next, err := os.ReadFile(exe)
-		if err != nil {
-			return err
-		}
-		old, err := os.ReadFile(d.Executable)
-		if err != nil {
-			return err
-		}
-		if bytes.Equal(next, old) {
-			return nil
-		}
-		return updateBinary(updateOperations{
-			stop: stop, start: start,
-			backup:  func() error { return atomicfile.Write(d.Executable+".bak", old, 0700) },
-			replace: func() error { return atomicfile.Write(d.Executable, next, 0700) },
-			restore: func() error { return atomicfile.Write(d.Executable, old, 0700) },
-			cleanup: func() { os.Remove(d.Executable + ".bak") },
-			healthy: func() error {
-				client := &http.Client{Timeout: time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-				deadline := time.Now().Add(10 * time.Second)
-				for time.Now().Before(deadline) {
-					response, err := client.Get("http://" + d.Listen + "/api/health")
-					if err == nil {
-						response.Body.Close()
-						if response.StatusCode == 200 {
-							return nil
-						}
-					}
-					time.Sleep(100 * time.Millisecond)
-				}
-				return errors.New("new service failed health check")
-			},
-		})
+		return updateDeployment(d, stop, start)
 	default:
 		return fmt.Errorf("unknown service action %q", action)
 	}
 }
 
+func controlTask(d Deployment, action string) error {
+	if !taskExists() {
+		if action == "uninstall" {
+			removeFirewallRule(d.Executable)
+			return errors.Join(removeIfExists(d.Executable), removeIfExists(filepath.Join(root(), "deployment.json")))
+		}
+		return errors.New("the wslpp scheduled task is missing; run uninstall, then install")
+	}
+	switch action {
+	case "start":
+		return startTask(d)
+	case "stop":
+		return stopTask(d)
+	case "restart":
+		if err := stopTask(d); err != nil {
+			return err
+		}
+		return startTask(d)
+	case "uninstall":
+		if err := stopTask(d); err != nil {
+			return err
+		}
+		if err := schtasks("/Delete", "/TN", Name, "/F"); err != nil {
+			return err
+		}
+		removeFirewallRule(d.Executable)
+		return errors.Join(removeIfExists(d.Executable), removeIfExists(filepath.Join(root(), "deployment.json")))
+	case "update":
+		return updateDeployment(d, func() error { return stopTask(d) }, func() error { return startTask(d) })
+	default:
+		return fmt.Errorf("unknown action %q", action)
+	}
+}
+
+// updateDeployment swaps in the running binary, rolling back when the new one
+// does not come up healthy.
+func updateDeployment(d Deployment, stop, start func() error) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(exe, d.Executable) {
+		return errors.New("run update from the new release binary outside the installed bin directory")
+	}
+	next, err := os.ReadFile(exe)
+	if err != nil {
+		return err
+	}
+	old, err := os.ReadFile(d.Executable)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(next, old) {
+		return nil
+	}
+	return updateBinary(updateOperations{
+		stop: stop, start: start,
+		backup:  func() error { return atomicfile.Write(d.Executable+".bak", old, 0700) },
+		replace: func() error { return atomicfile.Write(d.Executable, next, 0700) },
+		restore: func() error { return atomicfile.Write(d.Executable, old, 0700) },
+		cleanup: func() { os.Remove(d.Executable + ".bak") },
+		healthy: func() error { return healthy(d.Listen, 10*time.Second) },
+	})
+}
 func removeIfExists(path string) error {
 	err := os.Remove(path)
 	if os.IsNotExist(err) {
