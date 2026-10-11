@@ -2,40 +2,9 @@ package service
 
 import (
 	"bytes"
-	"errors"
-	"os"
-	"os/exec"
 	"strings"
 	"unicode/utf16"
 )
-
-// defaultDistro caches the name of the default distribution, it is only
-// looked up again when it isn't among the running ones.
-var defaultDistro string
-
-// IsWslRunning reports whether the default wsl distribution is running.
-// Only `wsl --list` commands are used here, they never boot the wsl vm,
-// unlike `wsl -- <cmd>`, so polling this keeps a stopped wsl stopped.
-func IsWslRunning() (bool, error) {
-	out, err := wslList("--list", "--running", "--quiet")
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// wsl exits with non-zero status when there are no running distributions
-			return false, nil
-		}
-		return false, err
-	}
-	running := parseLines(out)
-	if !containsFold(running, defaultDistro) {
-		all, err := wslList("--list", "--verbose")
-		if err != nil {
-			return false, err
-		}
-		defaultDistro = parseDefaultDistro(all)
-	}
-	return containsFold(running, defaultDistro), nil
-}
 
 func containsFold(names []string, name string) bool {
 	if name == "" {
@@ -47,17 +16,6 @@ func containsFold(names []string, name string) bool {
 		}
 	}
 	return false
-}
-
-func wslList(args ...string) (string, error) {
-	cmd := exec.Command("wsl", args...)
-	// newer wsl prints utf-8 with this set, older ones always print utf-16
-	cmd.Env = append(os.Environ(), "WSL_UTF8=1")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return decodeWslOutput(output), nil
 }
 
 // decodeWslOutput converts wsl.exe output, which is utf-16le on most
@@ -76,20 +34,23 @@ func decodeWslOutput(b []byte) string {
 	return string(utf16.Decode(u))
 }
 
-// parseDefaultDistro returns the distribution marked with '*' in the
-// output of `wsl --list --verbose`. Only the marker and the name column
-// are used, so localized headers and states don't matter.
-func parseDefaultDistro(out string) string {
-	for _, line := range parseLines(out) {
-		if !strings.HasPrefix(line, "*") {
+// parseDistros reads `wsl --list --verbose`. Only the default marker, the
+// last column (version) and the name are used, so localized headers and
+// states don't matter. Names may contain spaces; states are one word.
+func parseDistros(out string) []Distro {
+	var distros []Distro
+	for i, line := range parseLines(out) {
+		if i == 0 && !strings.HasPrefix(line, "*") {
+			continue // header
+		}
+		isDefault := strings.HasPrefix(line, "*")
+		fields := strings.Fields(strings.TrimPrefix(line, "*"))
+		if len(fields) < 3 {
 			continue
 		}
-		fields := strings.Fields(strings.TrimPrefix(line, "*"))
-		if len(fields) > 0 {
-			return fields[0]
-		}
+		distros = append(distros, Distro{Name: strings.Join(fields[:len(fields)-2], " "), Default: isDefault, Version: fields[len(fields)-1]})
 	}
-	return ""
+	return distros
 }
 
 // parseLines splits output into trimmed non-empty lines.

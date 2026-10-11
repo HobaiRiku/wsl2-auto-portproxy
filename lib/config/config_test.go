@@ -60,3 +60,67 @@ func TestAllowlistUnmarshalDuplicatePort(t *testing.T) {
 		t.Error("expected error for duplicate port")
 	}
 }
+
+func TestPortProxyRejectsMalformedMappings(t *testing.T) {
+	for _, raw := range []string{`"22"`, `""`, `"666:22:80"`, `"0:22"`, `"-1:22"`, `"70000:22"`, `"22:65536"`, `"22:0"`, `null`, `22`} {
+		t.Run(raw, func(t *testing.T) {
+			var p PortProxy
+			if err := json.Unmarshal([]byte(raw), &p); err == nil {
+				t.Fatalf("accepted invalid mapping %s", raw)
+			}
+		})
+	}
+}
+
+func TestParseRejectsAmbiguousOrInvalidConfig(t *testing.T) {
+	for _, raw := range []string{
+		`{"onlyPredefined":true,"OnlyPredefined":false}`,
+		`{"allowlist":{"tcp":{"22":[],"22":["10.0.0.0/8"]}}}`,
+		`{"predefined":{"tcp":["666:22","666:80"]}}`,
+		`{"listenAddress":"localhost"}`, `{"schemaVersion":2}`,
+		`{"maxConnections":1025}`, `{"udpIdleSeconds":-1}`,
+		`{"ignore":{"udp":[65536]}}`, `{"typo":true}`, `{} {}`,
+		`[]`, `null`, ``, `{"onlyPredefined":true,`, `/* unfinished`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			if _, err := Parse([]byte(raw)); err == nil {
+				t.Fatal("accepted invalid configuration")
+			}
+		})
+	}
+}
+func TestLegacyCommentsAndProtocolIsolation(t *testing.T) {
+	c, err := Parse([]byte(`{/* old config */ "predefined":{"tcp":["666:22"],"udp":["666:53"]},"allowlist":{"udp":{"666":[]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundtrip, err := Parse(data)
+	if err != nil || roundtrip.Predefined.Udp[0].Remote != 53 {
+		t.Fatalf("roundtrip: %v", err)
+	}
+	if string(stripComments([]byte(`"literal /* comment */ and \\"`))) != `"literal /* comment */ and \\"` {
+		t.Fatal("changed quoted string")
+	}
+}
+func FuzzParseDoesNotPanic(f *testing.F) {
+	for _, raw := range []string{`{}`, `{"predefined":{"tcp":["22"]}}`, `{"allowlist":{"udp":{"22":[]}}}`, `{"x":{]`} {
+		f.Add([]byte(raw))
+	}
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		c, err := Parse(raw)
+		if err != nil {
+			return
+		}
+		data, err := json.Marshal(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Parse(data); err != nil {
+			t.Fatalf("accepted config cannot roundtrip: %v", err)
+		}
+	})
+}
